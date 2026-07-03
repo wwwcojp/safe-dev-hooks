@@ -92,6 +92,18 @@ def test_allow_only_unlocks_ask_layer():
     assert bash_guard.evaluate("rm -rf /", cfg2)["decision"] == "deny"
 
 
+def test_no_false_positive_on_substring_commands():
+    assert bash_guard.evaluate("matchmod -R 777 /", CFG) is None
+    assert bash_guard.evaluate("legit push --force origin main", CFG) is None
+
+
+def test_rm_regex_is_redos_safe():
+    import time
+    start = time.monotonic()
+    bash_guard.evaluate("rm -" + "r" * 20000, CFG)
+    assert time.monotonic() - start < 1.0
+
+
 def test_blackbox_subprocess_deny(tmp_path):
     """stdin→stdout の黒箱テスト(スクリプトとして実行)。"""
     script = Path(__file__).resolve().parent.parent / "hooks" / "pre_tool_use" / "bash_guard.py"
