@@ -1,0 +1,9 @@
+[
+  {"name": "git-reset-hard", "regex": "git\\s+reset\\s+[^;|&]*--hard"},
+  {"name": "git-clean-force", "regex": "git\\s+clean\\s+-[a-zA-Z]*f"},
+  {"name": "git-force-push", "regex": "git\\s+push\\s+[^;|&]*(--force(-with-lease)?\\b|-f\\b)"},
+  {"name": "rm-recursive-or-force", "regex": "\\brm\\s+(-[^ ]*[rRf][^ ]*\\s+)+"},
+  {"name": "pipe-to-shell", "regex": "(curl|wget)[^;&]*\\|\\s*(sudo\\s+)?(ba|z|da)?sh\\b"},
+  {"name": "npm-publish", "regex": "\\bnpm\\s+publish\\b"},
+  {"name": "git-discard-worktree", "regex": "git\\s+(checkout|restore)\\s+(--\\s+)?\\.(\\s|$)"}
+]

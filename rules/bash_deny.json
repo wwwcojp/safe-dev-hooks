@@ -1,0 +1,14 @@
+[
+  {"name": "rm-root-or-home", "regex": "\\brm\\s+(-[^ ]+\\s+)*(/|/\\*|~|~/|\\$HOME)(\\s|$)"},
+  {"name": "rm-system-dir", "regex": "\\brm\\s+(-[^ ]+\\s+)*/(etc|usr|var|bin|boot|lib|home|opt|srv)(/|\\s|$)"},
+  {"name": "sudo-rm", "regex": "\\bsudo\\s+rm\\b"},
+  {"name": "force-push-protected", "regex": "git\\s+push\\s+[^;|&]*(--force\\b|-f\\b)[^;|&]*\\b(main|master)\\b"},
+  {"name": "force-push-protected-order", "regex": "git\\s+push\\s+[^;|&]*\\b(main|master)\\b[^;|&]*(--force\\b|-f\\b)"},
+  {"name": "mkfs", "regex": "\\bmkfs(\\.|\\s)"},
+  {"name": "dd-to-device", "regex": "\\bdd\\s+[^;|&]*of=/dev/"},
+  {"name": "fork-bomb", "regex": ":\\(\\)\\s*\\{[^}]*\\}\\s*;?\\s*:"},
+  {"name": "chmod-777-root", "regex": "chmod\\s+(-R\\s+)?777\\s+/(\\s|$)"},
+  {"name": "redirect-to-device", "regex": ">\\s*/dev/sd[a-z]"},
+  {"name": "sql-drop", "regex": "(?i)\\bDROP\\s+(TABLE|DATABASE)\\b"},
+  {"name": "sql-truncate", "regex": "(?i)\\bTRUNCATE\\s+(TABLE\\s+)?\\w"}
+]
