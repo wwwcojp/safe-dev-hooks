@@ -564,9 +564,10 @@ def scan_text(text: str, rules: list) -> list:
                 if not validator(digits):
                     continue
             findings.append({"rule": rule["name"], "match": m.group()})
-            break  # 1ルールにつき1件で十分
     return findings
 ```
+
+> **実装時変更(D12・ユーザー承認済み)**: 当初案の「1ルール1件で打ち切り(break)」はレビュー指摘により「全マッチ収集(同一match文字列はルール内で重複排除・初出順維持、1ルール上限 `MAX_FINDINGS_PER_RULE = 20` 件)」へ変更した。redactマスキングで2件目以降の異なるシークレットが漏れる実害を防ぐため。
 
 - [ ] **Step 4: テストが通ることを確認**
 
