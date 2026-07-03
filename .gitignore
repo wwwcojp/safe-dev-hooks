@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# uv
+uv.lock
+
+# Hooks runtime output (ローカル実行時に生成されるログ・状態ファイル)
+logs/
+.claude/logs/
+*.jsonl
+
+# Local-only Claude settings
+.claude/settings.local.json
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Scratch / temp
+tmp/
+*.tmp
