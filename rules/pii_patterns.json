@@ -1,0 +1,6 @@
+[
+  {"name": "email", "regex": "[\\w.+-]+@[\\w-]+\\.[\\w.-]+"},
+  {"name": "jp-phone", "regex": "\\b0\\d{1,4}-\\d{1,4}-\\d{4}\\b"},
+  {"name": "credit-card", "regex": "\\b\\d{4}[ -]?\\d{4}[ -]?\\d{4}[ -]?\\d{4}\\b", "validator": "luhn"},
+  {"name": "my-number", "regex": "\\b\\d{12}\\b|\\b\\d{4}-\\d{4}-\\d{4}\\b", "validator": "mynumber"}
+]

@@ -1,0 +1,7 @@
+{
+  "markers": [
+    "社外秘", "部外秘", "極秘", "取扱注意", "マル秘", "㊙",
+    "confidential", "internal only", "internal use only",
+    "do not distribute", "trade secret"
+  ]
+}
