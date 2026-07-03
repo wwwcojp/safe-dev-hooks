@@ -1,7 +1,7 @@
 # Claude Code 安全開発Hooks — 設計ドキュメント
 
 - 日付: 2026-07-03
-- ステータス: **ドラフト(セクション審議中)**
+- ステータス: **全セクション承認済み(2026-07-03)**
 - 対象リポジトリ: claude-code-hooks(汎用公開リポジトリ)
 
 ## 1. 目的とスコープ
@@ -66,7 +66,7 @@ claude-code-hooks/
 | exfil_output_scan | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | 応答に含まれるシークレット・PIIの検出。警告(additionalContext)またはマスキング(updatedToolOutput)を設定で選択 |
 | quality_gate | PostToolUse / `Edit\|Write` | 編集ファイルへ lint/format を実行し、エラーは decision:block でClaudeに自己修正させる(warn/block設定可) |
 | secrets_scan | PostToolUse / `Edit\|Write` | 書き込み内容からAWSキー・GitHubトークン・秘密鍵ブロック等を検出し block |
-| audit_log | PreToolUse+PostToolUse+Session系 / `*` | 全ツール実行を JSONL で非同期記録 |
+| audit_log | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | 全ツール実行とセッション境界を JSONL で非同期記録 |
 | notify | Notification | 許可待ち・アイドル時の通知(既定はターミナルベル、コマンド差し替え可) |
 
 ### 3.2 exfil_guard(外部送信ガード)詳細
@@ -75,7 +75,7 @@ claude-code-hooks/
 - **検査対象**: ツール引数全体(検索クエリ、URL、プロンプト、ペイロード)および応答本文。
 - **検出カテゴリ**:
   1. 認証情報 — APIキー、トークン、秘密鍵ブロック
-  2. 個人情報(PII) — メールアドレス、電話番号、クレジットカード番号(Luhn検証付き)、マイナンバー様の12桁数字
+  2. 個人情報(PII) — メールアドレス、電話番号、クレジットカード番号(Luhn検証付き)、マイナンバー(12桁+チェックデジット検証付き。単なる12桁数字では誤検知するため)
   3. 機密マーカー — 「社外秘」「部外秘」「取扱注意」「confidential」「internal only」等
   4. 組織固有パターン — 設定で定義するカスタム正規表現(社内ドメイン、コードネーム、顧客ID形式等)
   5. 意味的判定(semantic) — 機密マーカーが無くても機微と思われる情報(人事・給与・顧客情報・未公開の事業情報等)をLLMで判定。ヘッドレスClaude(`claude -p`、既定はHaiku)に判定プロンプトを投げ、「機微の可能性 + 理由」を受け取って ask に変換
@@ -89,7 +89,7 @@ claude-code-hooks/
   - `always`: 対象ツールの呼び出しを一律 ask(許可済みリスト登録サーバーを除く)
   - カテゴリごとに deny / ask / off の上書きも可能
 - **除外制御**: 信頼するMCPサーバーの allowlist(検査スキップ)
-- **既知の限界(文書化必須)**: 文脈依存のPII(人名等)は正規表現では検出不可。機械的に判定可能な形式+組織定義パターンを確実に止める設計とする。
+- **既知の限界(文書化必須)**: 文脈依存の機微情報(人名等)は正規表現では検出不可。semantic カテゴリが補完するが確率的であり、検出漏れはあり得る。「正規表現+組織定義パターンで機械的に判定可能なものは確実に止め、それ以外は semantic でベストエフォート検出」という保証レベルを security-model.md に明記する。
 
 ## 4. 設定ファイルとルール定義(承認済み)
 
@@ -155,10 +155,40 @@ claude-code-hooks/
 - **quality_gateの自動検出**: `commands` 未指定時は拡張子と `pyproject.toml`(ruff/black)、`package.json`(eslint/prettier/biome)、`Cargo.toml`(clippy/rustfmt)等から推定。検出不能なら何もしない
 - **設定自体の検証**: 起動時にスキーマ検証。不正時は `systemMessage` で通知し安全側の既定値で継続
 
-## 5. 未確定(審議中)セクション
+## 5. 配布(承認済み)
 
-- 配布(プラグインマニフェスト・マーケットプレイス)・文書構成・多言語(日/英)方針
-- テスト戦略・CI
+- **プラグイン**: `.claude-plugin/plugin.json`(名前: `safe-dev-hooks`、semver管理)+ `hooks/hooks.json` で全Hookを配線。スクリプト参照は `${CLAUDE_PLUGIN_ROOT}`。リポジトリ直下に `marketplace.json` を置き、`/plugin marketplace add <GitHubリポジトリ>` → `/plugin install safe-dev-hooks` で導入可能にする
+- **手動導入**: `examples/settings.json` に settings.json 用スニペット(全部入り/最小構成の2種)。`git clone` + コピペで部分導入可能
+- **前提条件**: `uv` のみ(Python本体はuvが解決)。semantic判定は Claude Code CLI(`claude`)の存在を前提とし、見つからなければ自動スキップして他カテゴリのみで動作する
+
+## 6. 文書化方針(承認済み)
+
+日英バイリンガル(README.md=英語 / README.ja.md=日本語。docs/ 配下は日本語を正とし、英訳は将来課題として明記)。
+
+| 文書 | 内容 |
+|------|------|
+| `README.md` / `README.ja.md` | 概要、クイックスタート(プラグイン/手動)、Hook一覧表 |
+| `docs/hooks/<hook名>.md` | Hookごとのリファレンス: 目的、検査内容、判定基準(deny/ask)、設定キー、既知の限界 |
+| `docs/configuration.md` | `.claude-hooks.json` 全スキーマと設定例(個人/チーム/高セキュリティの3プリセット) |
+| `docs/security-model.md` | 脅威モデル: 保証すること/しないこと(正規表現の限界、semantic判定の確率性、`disableAllHooks` による無効化可能性等) |
+| `docs/best-practices.md` | 調査したベストプラクティスの出典付きまとめ(公式ドキュメント・先行リポジトリ) |
+| `CHANGELOG.md` / `CONTRIBUTING.md` | Keep a Changelog 形式の変更履歴、ルール追加のコントリビュート手順 |
+
+設計判断は本ドキュメントの決定事項ログ(セクション2)に追記し続ける。
+
+## 7. テスト戦略・CI(承認済み)
+
+- **pytest**: 各Hookへ模擬イベントJSON(`tests/fixtures/`)をstdin経由で流し、判定JSON出力を検証。ケース構成:
+  - 危険系(denyが返ること)/グレー系(askが返ること)/安全系(無判定で通ること)
+  - **バイパス試行**: `&&` `;` `||` 連結、クォート・エスケープ、`$()` 置換、絶対パス表記ゆれ、大文字小文字
+- **semantic判定はモック**: ヘッドレスClaude呼び出しはテストではスタブ化。実疎通は手動スモークテスト手順として `docs/` に文書化
+- **CI**: GitHub Actions で `ruff check` + `pytest`(uvセットアップ)。`rules/*.json` のスキーマ検証も含め、パターン追加PRを機械検証する
+
+## 8. エラーハンドリング方針
+
+- Hookスクリプト自体の例外は **fail-open + 可視化**: クラッシュでツール実行を止めない(exit 0)が、`systemMessage` で「ガードが動作しなかった」ことを必ず通知する。ただし bash_guard / secrets_guard の deny 層判定中の例外のみ **fail-close**(安全側に倒して ask を返す)
+- タイムアウト: 各Hookは軽量に保ち、quality_gate のみ長め(60s)のtimeoutを hooks.json で明示
+- 監査ログ書き込み失敗は無視(開発を止めない)
 
 ---
-*このドキュメントはセクション承認のたびに更新される。*
+*このドキュメントはセクション承認のたびに更新される。実装計画は writing-plans スキルで別途作成する。*
