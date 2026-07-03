@@ -30,3 +30,6 @@ logs/
 # Scratch / temp
 tmp/
 *.tmp
+
+# SDD scratch
+.superpowers/
