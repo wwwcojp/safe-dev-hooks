@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 RULES_DIR = Path(__file__).resolve().parent.parent.parent / "rules"
+MAX_FINDINGS_PER_RULE = 20
 
 
 def load_rules(name: str):
@@ -43,12 +44,20 @@ _VALIDATORS = {"luhn": luhn_ok, "mynumber": mynumber_ok}
 def scan_text(text: str, rules: list) -> list:
     findings = []
     for rule in rules:
+        seen_matches = set()
+        rule_findings = []
         for m in re.finditer(rule["regex"], text):
             validator = _VALIDATORS.get(rule.get("validator", ""))
             if validator is not None:
                 digits = re.sub(r"\D", "", m.group())
                 if not validator(digits):
                     continue
-            findings.append({"rule": rule["name"], "match": m.group()})
-            break  # 1ルールにつき1件で十分
+            match_str = m.group()
+            # 同一ルール内で重複排除(初出順を維持)
+            if match_str not in seen_matches:
+                seen_matches.add(match_str)
+                rule_findings.append({"rule": rule["name"], "match": match_str})
+                if len(rule_findings) >= MAX_FINDINGS_PER_RULE:
+                    break
+        findings.extend(rule_findings)
     return findings

@@ -62,3 +62,17 @@ def test_confidential_markers_file_shape():
     data = patterns.load_rules("confidential_markers.json")
     assert "社外秘" in data["markers"]
     assert "confidential" in data["markers"]
+
+
+def test_scan_collects_all_distinct_matches_per_rule():
+    rules = patterns.load_rules("secret_patterns.json")
+    text = "a=AKIAIOSFODNN7EXAMPLE b=AKIAZZZZZZZZZZZZZZZZ"
+    hits = [h for h in patterns.scan_text(text, rules) if h["rule"] == "aws-access-key"]
+    assert {h["match"] for h in hits} == {"AKIAIOSFODNN7EXAMPLE", "AKIAZZZZZZZZZZZZZZZZ"}
+
+
+def test_scan_dedupes_identical_matches():
+    rules = patterns.load_rules("secret_patterns.json")
+    text = "x=AKIAIOSFODNN7EXAMPLE y=AKIAIOSFODNN7EXAMPLE"
+    hits = [h for h in patterns.scan_text(text, rules) if h["rule"] == "aws-access-key"]
+    assert len(hits) == 1
