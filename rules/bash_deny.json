@@ -1,6 +1,7 @@
 [
   {"name": "rm-root-or-home", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/|/\\*|~|~/|\\$HOME)(\\s|$)"},
-  {"name": "rm-system-dir", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(etc|usr|var|bin|boot|lib|home|opt|srv)(/|\\s|$)"},
+  {"name": "rm-system-dir", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(etc|usr|var|bin|boot|lib|opt|srv)(/|\\s|$)"},
+  {"name": "rm-home-root", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/home/[\\w.-]+/?(\\s|$)"},
   {"name": "sudo-rm", "regex": "\\bsudo\\s+rm\\b"},
   {"name": "force-push-protected", "regex": "\\bgit\\s+push\\s+[^;|&]*(--force\\b|-f\\b)[^;|&]*\\b(main|master)\\b"},
   {"name": "force-push-protected-order", "regex": "\\bgit\\s+push\\s+[^;|&]*\\b(main|master)\\b[^;|&]*(--force\\b|-f\\b)"},
@@ -9,6 +10,6 @@
   {"name": "fork-bomb", "regex": ":\\(\\)\\s*\\{[^}]*\\}\\s*;?\\s*:"},
   {"name": "chmod-777-root", "regex": "\\bchmod\\s+(-R\\s+)?777\\s+/(\\s|$)"},
   {"name": "redirect-to-device", "regex": ">\\s*/dev/sd[a-z]"},
-  {"name": "sql-drop", "regex": "(?i)\\bDROP\\s+(TABLE|DATABASE)\\b"},
-  {"name": "sql-truncate", "regex": "(?i)\\bTRUNCATE\\s+(TABLE\\s+)?\\w"}
+  {"name": "sql-drop", "regex": "(?i)\\b(psql|mysql|mariadb|sqlite3|sqlcmd)\\b[^;|&]*\\bDROP\\s+(TABLE|DATABASE)\\b"},
+  {"name": "sql-truncate", "regex": "(?i)\\b(psql|mysql|mariadb|sqlite3|sqlcmd)\\b[^;|&]*\\bTRUNCATE\\s+(TABLE\\s+)?\\w"}
 ]

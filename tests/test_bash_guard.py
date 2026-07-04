@@ -23,6 +23,7 @@ DENY_CASES = [
     ":(){ :|:& };:",
     "chmod -R 777 /",
     "psql -c 'DROP TABLE users;'",
+    "rm -rf /home/alice",
 ]
 
 ASK_CASES = [
@@ -43,6 +44,8 @@ SAFE_CASES = [
     "rm todo.txt",
     "cat README.md",
     "grep -r 'force' src/",
+    "grep -r 'DROP TABLE' src/",
+    "git commit -m 'remove drop table migration'",
 ]
 
 BYPASS_CASES = [
@@ -102,6 +105,16 @@ def test_rm_regex_is_redos_safe():
         start = time.monotonic()
         bash_guard.evaluate(payload, CFG)
         assert time.monotonic() - start < 1.0, payload[:20]
+
+
+def test_deep_project_paths_fall_to_ask_not_deny():
+    # ホーム配下の深いパスの再帰削除は deny ではなく ask(rm-recursive-or-force)
+    v = bash_guard.evaluate("rm -rf /home/alice/myproj/node_modules", CFG)
+    assert v is not None and v["decision"] == "ask"
+
+
+def test_sql_strings_without_client_context_pass():
+    assert bash_guard.evaluate('echo "TRUNCATE TABLE users" > migration.sql', CFG) is None
 
 
 def test_blackbox_subprocess_deny(tmp_path):
