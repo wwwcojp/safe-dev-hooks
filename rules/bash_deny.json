@@ -1,6 +1,6 @@
 [
-  {"name": "rm-root-or-home", "regex": "\\brm\\s+(-[^ ]+\\s+)*(/|/\\*|~|~/|\\$HOME)(\\s|$)"},
-  {"name": "rm-system-dir", "regex": "\\brm\\s+(-[^ ]+\\s+)*/(etc|usr|var|bin|boot|lib|home|opt|srv)(/|\\s|$)"},
+  {"name": "rm-root-or-home", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/|/\\*|~|~/|\\$HOME)(\\s|$)"},
+  {"name": "rm-system-dir", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(etc|usr|var|bin|boot|lib|home|opt|srv)(/|\\s|$)"},
   {"name": "sudo-rm", "regex": "\\bsudo\\s+rm\\b"},
   {"name": "force-push-protected", "regex": "\\bgit\\s+push\\s+[^;|&]*(--force\\b|-f\\b)[^;|&]*\\b(main|master)\\b"},
   {"name": "force-push-protected-order", "regex": "\\bgit\\s+push\\s+[^;|&]*\\b(main|master)\\b[^;|&]*(--force\\b|-f\\b)"},

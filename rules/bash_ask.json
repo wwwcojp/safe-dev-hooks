@@ -2,7 +2,7 @@
   {"name": "git-reset-hard", "regex": "\\bgit\\s+reset\\s+[^;|&]*--hard"},
   {"name": "git-clean-force", "regex": "\\bgit\\s+clean\\s+-[a-zA-Z]*f"},
   {"name": "git-force-push", "regex": "\\bgit\\s+push\\s+[^;|&]*(--force(-with-lease)?\\b|-f\\b)"},
-  {"name": "rm-recursive-or-force", "regex": "\\brm\\s+(?:-[^ ]+\\s+){0,8}-[^ ]*[rRf]"},
+  {"name": "rm-recursive-or-force", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}-\\S*[rRf]"},
   {"name": "pipe-to-shell", "regex": "(curl|wget)[^;&]*\\|\\s*(sudo\\s+)?(ba|z|da)?sh\\b"},
   {"name": "npm-publish", "regex": "\\bnpm\\s+publish\\b"},
   {"name": "git-discard-worktree", "regex": "\\bgit\\s+(checkout|restore)\\s+(--\\s+)?\\.(\\s|$)"}

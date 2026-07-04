@@ -99,9 +99,10 @@ def test_no_false_positive_on_substring_commands():
 
 def test_rm_regex_is_redos_safe():
     import time
-    start = time.monotonic()
-    bash_guard.evaluate("rm -" + "r" * 20000, CFG)
-    assert time.monotonic() - start < 1.0
+    for payload in ["rm -" + "r" * 20000, "rm " + "-\t" * 40 + "z", "rm " + "-\t" * 5000 + "z"]:
+        start = time.monotonic()
+        bash_guard.evaluate(payload, CFG)
+        assert time.monotonic() - start < 1.0, payload[:20]
 
 
 def test_blackbox_subprocess_deny(tmp_path):
