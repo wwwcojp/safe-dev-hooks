@@ -16,9 +16,10 @@ SUMMARY_MAX_CHARS = 500
 
 def main() -> None:
     event = hook_io.read_event()
-    cfg = config.load_config(event.get("cwd")).get("audit_log", {})
+    cfg_all = config.load_config(event.get("cwd"))
+    cfg = cfg_all.get("audit_log", {})
     if not cfg.get("enabled", True):
-        sys.exit(0)
+        hook_io.finalize(None, cfg_all)
     try:
         log_dir = Path(cfg.get("path", ".claude/logs"))
         if not log_dir.is_absolute():
@@ -39,7 +40,7 @@ def main() -> None:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass  # 監査ログの失敗は開発を止めない(spec セクション8)
-    sys.exit(0)
+    hook_io.finalize(None, cfg_all)
 
 
 if __name__ == "__main__":

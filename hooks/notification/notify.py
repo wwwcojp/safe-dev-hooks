@@ -14,9 +14,10 @@ from lib import config, hook_io  # noqa: E402
 
 def main() -> None:
     event = hook_io.read_event()
-    cfg = config.load_config(event.get("cwd")).get("notify", {})
+    cfg_all = config.load_config(event.get("cwd"))
+    cfg = cfg_all.get("notify", {})
     if not cfg.get("enabled", True):
-        sys.exit(0)
+        hook_io.finalize(None, cfg_all)
     command = cfg.get("command")
     if command:
         message = event.get("message", "")
@@ -27,9 +28,8 @@ def main() -> None:
             )
         except Exception:
             pass
-        sys.exit(0)
-    hook_io.emit({"terminalSequence": ""})
-    sys.exit(0)
+        hook_io.finalize(None, cfg_all)
+    hook_io.finalize({"terminalSequence": "\u0007"}, cfg_all)
 
 
 if __name__ == "__main__":

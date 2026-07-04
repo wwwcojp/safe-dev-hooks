@@ -42,3 +42,11 @@ def test_non_dict_config_records_error(monkeypatch, tmp_path):
     (tmp_path / ".claude-hooks.json").write_text("[1,2]", encoding="utf-8")
     cfg = config.load_config(str(tmp_path))
     assert len(cfg["_errors"]) == 1
+
+
+def test_config_section_type_mismatch_resets_to_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text('{"audit_log": true}', encoding="utf-8")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["audit_log"]["enabled"] is True
+    assert len(cfg["_errors"]) == 1

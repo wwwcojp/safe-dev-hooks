@@ -57,5 +57,9 @@ def load_config(cwd: str | None = None) -> dict:
             errors.append(f"{path}: オブジェクトではありません")
             continue
         cfg = _merge(cfg, data)
+    for key, default_value in DEFAULTS.items():
+        if not isinstance(cfg.get(key), type(default_value)):
+            errors.append(f"{key}: 設定値の型が不正なため既定値を使用します")
+            cfg[key] = copy.deepcopy(default_value)
     cfg["_errors"] = errors
     return cfg
