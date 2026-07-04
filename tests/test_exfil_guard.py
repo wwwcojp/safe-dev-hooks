@@ -2,7 +2,6 @@ import io
 import json
 
 import pytest
-
 from helpers import load_hook
 from lib import config
 
@@ -49,7 +48,14 @@ def test_confidential_marker_ask():
 
 
 def test_custom_pattern():
-    cfg = _cfg(custom_patterns=[{"name": "internal-domain", "regex": "[\\w.-]+\\.corp\\.example\\.jp"}])
+    cfg = _cfg(
+        custom_patterns=[
+            {
+                "name": "internal-domain",
+                "regex": "[\\w.-]+\\.corp\\.example\\.jp",
+            }
+        ]
+    )
     v = exfil_guard.evaluate("http://wiki.corp.example.jp/page", cfg)
     assert v["decision"] == "ask"
     assert "internal-domain" in v["reason"]

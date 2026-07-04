@@ -2,7 +2,6 @@ import io
 import json
 
 import pytest
-
 from lib import hook_io
 
 

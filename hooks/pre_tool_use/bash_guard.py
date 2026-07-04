@@ -41,7 +41,10 @@ def evaluate(command: str, cfg: dict) -> dict | None:
             if re.search(rule["regex"], t) and not any(re.search(a, t) for a in allow):
                 return {
                     "decision": "ask",
-                    "reason": f"注意が必要なコマンドを検出: {rule['name']}。実行してよいか確認してください",
+                    "reason": (
+                        f"注意が必要なコマンドを検出: {rule['name']}。"
+                        "実行してよいか確認してください"
+                    ),
                 }
     return None
 
@@ -59,7 +62,10 @@ def main() -> None:
         verdict = evaluate(command, cfg)
     except Exception as exc:  # deny層の判定不能は安全側に倒す(fail-close)
         hook_io.finalize(
-            hook_io.pre_tool_decision("ask", f"bash_guard の判定に失敗したため確認してください: {exc}"),
+            hook_io.pre_tool_decision(
+                "ask",
+                f"bash_guard の判定に失敗したため確認してください: {exc}",
+            ),
             cfg_all,
         )
         return

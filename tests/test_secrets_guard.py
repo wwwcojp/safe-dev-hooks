@@ -1,5 +1,4 @@
 import pytest
-
 from helpers import load_hook
 
 secrets_guard = load_hook("pre_tool_use/secrets_guard.py")
@@ -59,5 +58,7 @@ def test_bash_non_path_tokens_ignored():
 
 
 def test_bash_path_like_tokens_still_denied():
-    assert secrets_guard.evaluate(_event("Bash", command="cat secrets.yaml"), CFG)["decision"] == "deny"
-    assert secrets_guard.evaluate(_event("Bash", command="cp .env.example .env"), CFG)["decision"] == "deny"
+    v1 = secrets_guard.evaluate(_event("Bash", command="cat secrets.yaml"), CFG)
+    assert v1["decision"] == "deny"
+    v2 = secrets_guard.evaluate(_event("Bash", command="cp .env.example .env"), CFG)
+    assert v2["decision"] == "deny"

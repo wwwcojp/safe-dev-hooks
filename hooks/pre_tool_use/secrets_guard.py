@@ -84,7 +84,10 @@ def main() -> None:
         verdict = evaluate(event, cfg)
     except Exception as exc:  # fail-close(ask)
         hook_io.finalize(
-            hook_io.pre_tool_decision("ask", f"secrets_guard の判定に失敗したため確認してください: {exc}"),
+            hook_io.pre_tool_decision(
+                "ask",
+                f"secrets_guard の判定に失敗したため確認してください: {exc}",
+            ),
             cfg_all,
         )
         return

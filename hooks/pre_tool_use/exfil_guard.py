@@ -41,8 +41,14 @@ def evaluate(payload_text: str, cfg: dict) -> dict | None:
         for f in items:
             findings.append({"category": category, "action": action, "rule": f["rule"]})
 
-    add("credentials", patterns.scan_text(payload_text, patterns.load_rules("secret_patterns.json")))
-    add("pii", patterns.scan_text(payload_text, patterns.load_rules("pii_patterns.json")))
+    add(
+        "credentials",
+        patterns.scan_text(payload_text, patterns.load_rules("secret_patterns.json")),
+    )
+    add(
+        "pii",
+        patterns.scan_text(payload_text, patterns.load_rules("pii_patterns.json")),
+    )
     lowered = payload_text.lower()
     markers = [
         m for m in patterns.load_rules("confidential_markers.json")["markers"]
@@ -112,7 +118,10 @@ def main() -> None:
             if verdict is None or verdict["decision"] != "deny":  # denyは降格させない
                 verdict = {
                     "decision": "ask",
-                    "reason": f"外部送信({tool})を検出しました(mode=always)。送信してよいか確認してください",
+                    "reason": (
+                        f"外部送信({tool})を検出しました(mode=always)。"
+                        "送信してよいか確認してください"
+                    ),
                 }
         else:
             verdict = evaluate(payload_text, cfg)
@@ -121,7 +130,10 @@ def main() -> None:
                 if s:
                     verdict = {
                         "decision": "ask",
-                        "reason": f"LLM判定: 機微情報を含む可能性 — {s.get('reason', '(理由なし)')}",
+                        "reason": (
+                            f"LLM判定: 機微情報を含む可能性 — "
+                            f"{s.get('reason', '(理由なし)')}"
+                        ),
                     }
     except Exception as exc:  # 外部送信ガードは fail-open + 可視化
         hook_io.fail_open("exfil_guard", exc)

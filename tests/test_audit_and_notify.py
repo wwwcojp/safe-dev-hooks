@@ -2,7 +2,6 @@ import io
 import json
 
 import pytest
-
 from helpers import load_hook
 from lib import config
 

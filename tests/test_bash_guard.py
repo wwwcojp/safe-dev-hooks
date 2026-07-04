@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from helpers import load_hook
 
 bash_guard = load_hook("pre_tool_use/bash_guard.py")

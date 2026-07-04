@@ -3,7 +3,6 @@ import json
 import shlex
 
 import pytest
-
 from helpers import load_hook
 from lib import config
 

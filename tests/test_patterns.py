@@ -48,7 +48,10 @@ def test_pii_credit_card_requires_luhn():
 def test_pii_mynumber_requires_check_digit():
     rules = patterns.load_rules("pii_patterns.json")
     assert any(h["rule"] == "my-number" for h in patterns.scan_text("番号: 123456789018", rules))
-    assert not any(h["rule"] == "my-number" for h in patterns.scan_text("番号: 123456789012", rules))
+    text_invalid = "番号: 123456789012"
+    assert not any(
+        h["rule"] == "my-number" for h in patterns.scan_text(text_invalid, rules)
+    )
 
 
 def test_pii_email_and_phone():

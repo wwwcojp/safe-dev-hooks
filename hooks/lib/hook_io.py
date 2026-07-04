@@ -41,7 +41,10 @@ def finalize(out: dict | None, cfg: dict) -> None:
     errors = cfg.get("_errors") or []
     if errors:
         out = dict(out or {})
-        out["systemMessage"] = "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: " + "; ".join(errors)
+        out["systemMessage"] = (
+            "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: "
+            + "; ".join(errors)
+        )
     if out:
         emit(out)
     sys.exit(0)
@@ -49,5 +52,12 @@ def finalize(out: dict | None, cfg: dict) -> None:
 
 def fail_open(hook_name: str, exc: Exception) -> None:
     """Hook自体の異常時: ツール実行は止めないが必ず可視化する(fail-open)。"""
-    emit({"systemMessage": f"[safe-dev-hooks] {hook_name} が異常終了したため検査をスキップしました: {exc}"})
+    emit(
+        {
+            "systemMessage": (
+                f"[safe-dev-hooks] {hook_name} が異常終了したため検査をスキップしました: "
+                f"{exc}"
+            )
+        }
+    )
     sys.exit(0)
