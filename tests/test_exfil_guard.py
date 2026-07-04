@@ -86,6 +86,20 @@ def test_main_always_mode_asks_everything(monkeypatch, tmp_path, capsys):
     assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
+def test_main_always_mode_deny_not_downgraded(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"exfil_guard": {"mode": "always"}}), encoding="utf-8"
+    )
+    event = {
+        "tool_name": "mcp__foo__bar",
+        "cwd": str(tmp_path),
+        "tool_input": {"q": "AKIAIOSFODNN7EXAMPLE"},
+    }
+    out = _run_main(monkeypatch, event, capsys)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_main_trusted_server_skipped_even_in_always(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(

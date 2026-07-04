@@ -78,10 +78,12 @@ def main() -> None:
     payload_text = json.dumps(event.get("tool_input") or {}, ensure_ascii=False)
     try:
         if cfg.get("mode") == "always":
-            verdict = {
-                "decision": "ask",
-                "reason": f"外部送信({tool})を検出しました(mode=always)。送信してよいか確認してください",
-            }
+            verdict = evaluate(payload_text, cfg)
+            if verdict is None or verdict["decision"] != "deny":  # denyは降格させない
+                verdict = {
+                    "decision": "ask",
+                    "reason": f"外部送信({tool})を検出しました(mode=always)。送信してよいか確認してください",
+                }
         else:
             verdict = evaluate(payload_text, cfg)
             if verdict is None and cfg.get("categories", {}).get("semantic", "ask") != "off":
