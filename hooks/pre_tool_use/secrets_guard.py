@@ -14,6 +14,15 @@ from lib import config, hook_io, patterns  # noqa: E402
 
 FILE_TOOLS = ("Read", "Edit", "Write")
 
+_GLOB_CHARS = set("*?[")
+
+
+def _looks_like_path(token: str) -> bool:
+    """パス/ファイル名の形をしたトークンだけ検査対象にする(検索語やglobパターンを除外)。"""
+    if not token or _GLOB_CHARS & set(token):
+        return False
+    return "/" in token or token[0] in ".~" or "." in token
+
 
 def check_path(path_str: str, cfg: dict) -> str | None:
     rules = patterns.load_rules("sensitive_paths.json")
@@ -49,6 +58,8 @@ def evaluate(event: dict, cfg: dict) -> dict | None:
         except ValueError:
             tokens = command.split()
         for tok in tokens:
+            if not _looks_like_path(tok):
+                continue
             hit = check_path(tok, cfg)
             if hit:
                 target = tok

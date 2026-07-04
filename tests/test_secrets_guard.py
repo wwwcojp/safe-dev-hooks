@@ -51,3 +51,13 @@ def test_config_protected_paths_extend():
 def test_config_allow_paths_extend():
     cfg = dict(CFG, allow_paths=[".env.template"])
     assert secrets_guard.evaluate(_event("Read", file_path="/proj/.env.template"), cfg) is None
+
+
+def test_bash_non_path_tokens_ignored():
+    assert secrets_guard.evaluate(_event("Bash", command="grep -rn credentials src/"), CFG) is None
+    assert secrets_guard.evaluate(_event("Bash", command='find . -name "*.pem"'), CFG) is None
+
+
+def test_bash_path_like_tokens_still_denied():
+    assert secrets_guard.evaluate(_event("Bash", command="cat secrets.yaml"), CFG)["decision"] == "deny"
+    assert secrets_guard.evaluate(_event("Bash", command="cp .env.example .env"), CFG)["decision"] == "deny"
