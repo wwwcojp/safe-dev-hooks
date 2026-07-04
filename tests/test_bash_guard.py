@@ -24,6 +24,7 @@ DENY_CASES = [
     "chmod -R 777 /",
     "psql -c 'DROP TABLE users;'",
     "rm -rf /home/alice",
+    "rm -rf /home",
 ]
 
 ASK_CASES = [
