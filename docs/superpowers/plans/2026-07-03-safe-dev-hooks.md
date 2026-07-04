@@ -1865,11 +1865,11 @@ WRITE_TOOLS = ("Edit", "Write")
 COMMAND_TIMEOUT_SEC = 45
 OUTPUT_TAIL_CHARS = 1500
 
-# 自動検出: (globパターン, 必要な実行ファイル, 前提設定ファイル(任意), コマンド)
+# 自動検出: (globパターン, 必要な実行ファイル, 前提設定ファイル(いずれか必須), コマンド)
 AUTO_DETECT = [
-    ("*.py", "ruff", None, "ruff check {file}"),
-    ("*.rs", "rustfmt", None, "rustfmt --check {file}"),
-    ("*.js|*.jsx|*.ts|*.tsx", "npx", "package.json", "npx --no-install eslint {file}"),
+    ("*.py", "ruff", ("pyproject.toml", "ruff.toml", ".ruff.toml"), "ruff check {file}"),
+    ("*.rs", "rustfmt", ("Cargo.toml",), "rustfmt --check {file}"),
+    ("*.js|*.jsx|*.ts|*.tsx", "npx", ("package.json",), "npx --no-install eslint {file}"),
 ]
 
 
