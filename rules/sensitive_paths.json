@@ -1,0 +1,9 @@
+{
+  "protected": [
+    ".env", ".env.*", "*.pem", "*.key", "id_rsa*", "id_ed25519*", "id_ecdsa*",
+    "*.p12", "*.pfx", "*.keystore", ".credentials.json", "credentials",
+    ".netrc", ".npmrc", ".pypirc", "secrets.*"
+  ],
+  "protected_dirs": ["~/.ssh", "~/.aws", "~/.gnupg"],
+  "allow": [".env.example", ".env.sample", ".env.template", "*.pub"]
+}
