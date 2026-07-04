@@ -30,6 +30,13 @@ DEFAULTS: dict = {
     "notify": {"enabled": True, "command": None},
 }
 
+_ENUM_KEYS = {
+    ("exfil_guard", "mode"): {"detect", "always"},
+    ("exfil_output_scan", "action"): {"warn", "redact"},
+    ("quality_gate", "mode"): {"block", "warn"},
+}
+_CATEGORY_ACTIONS = {"deny", "ask", "off"}
+
 
 def _merge(base: dict, override: dict) -> dict:
     out = dict(base)
@@ -61,5 +68,23 @@ def load_config(cwd: str | None = None) -> dict:
         if not isinstance(cfg.get(key), type(default_value)):
             errors.append(f"{key}: 設定値の型が不正なため既定値を使用します")
             cfg[key] = copy.deepcopy(default_value)
+    for (section, sub_key), allowed in _ENUM_KEYS.items():
+        value = cfg.get(section, {}).get(sub_key)
+        if value not in allowed:
+            errors.append(
+                f"{section}.{sub_key}: 未知の値 {value!r} のため既定値を使用します"
+            )
+            cfg[section][sub_key] = DEFAULTS[section][sub_key]
+    categories = cfg.get("exfil_guard", {}).get("categories", {})
+    for cat_key, cat_value in list(categories.items()):
+        if cat_value not in _CATEGORY_ACTIONS:
+            errors.append(
+                f"exfil_guard.categories.{cat_key}: 未知の値 {cat_value!r} のため既定値を使用します"
+            )
+            default_categories = DEFAULTS["exfil_guard"]["categories"]
+            if cat_key in default_categories:
+                categories[cat_key] = default_categories[cat_key]
+            else:
+                del categories[cat_key]
     cfg["_errors"] = errors
     return cfg

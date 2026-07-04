@@ -50,3 +50,15 @@ def test_config_section_type_mismatch_resets_to_default(monkeypatch, tmp_path):
     cfg = config.load_config(str(tmp_path))
     assert cfg["audit_log"]["enabled"] is True
     assert len(cfg["_errors"]) == 1
+
+
+def test_enum_typo_falls_back_to_safe_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"exfil_guard": {"mode": "detct", "categories": {"credentials": "denny"}}}),
+        encoding="utf-8",
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["exfil_guard"]["mode"] == "detect"
+    assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
+    assert len(cfg["_errors"]) == 2
