@@ -1,0 +1,56 @@
+# セキュリティモデル
+
+## 1. 脅威モデル
+
+このHooks集が対象とするのは **エージェント(Claude Code)の事故・暴走の防止** である。想定する失敗モードは、たとえば以下のようなものである。
+
+- ユーザーの意図しない `rm -rf` や force push をエージェントが誤って実行してしまう
+- エージェントが `.env` や秘密鍵を読み取り、その内容をコミットメッセージやMCPツールの引数に含めてしまう
+- lint/formatを経ないままの編集が積み重なる
+- MCPツールやWebFetch/WebSearchの応答に含まれるシークレット・PIIをエージェントが認識せずに別の場所へ転記してしまう
+
+**このHooks集が対象としないもの**:
+
+- **悪意あるユーザーへの防御**。ローカル環境で `claude` を操作できるユーザーは、Claude Codeの設定(`disableAllHooks`)や `settings.json` そのものを書き換えることで、任意のHookを無効化できる。悪意を持ってこれを行うユーザーからシステムを守る仕組みではない。
+- **悪意あるプラグイン・MCPサーバーへの防御**。信頼できないプラグインやMCPサーバーを導入すること自体のリスクは、このHooks集の対象外である。
+
+## 2. 保証すること
+
+- **deny層パターンの決定論的ブロック**: `bash_guard`/`secrets_guard` の deny 判定は正規表現による決定論的な照合であり、Claude Codeの permission mode(`acceptEdits`/`bypassPermissions` 等)に関わらず、Hookが有効である限り常に同じ結果でブロックされる。
+- **設定ファイルからのdeny層解除不可**: `.claude-hooks.json` の `bash_guard.allow` は ask 層の判定のみを解除できる。deny層(`rules/bash_deny.json` の各ルールおよび `secrets_guard` の保護パス)を設定ファイルから解除する手段は用意されていない。deny判定を止める唯一の方法はHook自体の無効化である。
+- **fail-closeによる安全側判定**: `bash_guard`/`secrets_guard` の判定処理中に例外が発生した場合、ツール実行を止めずに `ask` を返す(黙って通さない)。
+
+## 3. 保証しないこと
+
+- **`disableAllHooks` やHook設定削除による無効化を防げない**: Claude Code の設定機能として、ユーザー(またはユーザーの操作を代行するエージェント自身)が `disableAllHooks` を設定する、または `settings.json`/プラグインの有効化状態を変更することで、Hooksを完全に迂回できる。これはClaude Code本体の仕様であり、本Hooks集の実装では防げない。
+- **正規表現の網羅性**: `bash_guard`/`secrets_guard`/`exfil_guard`/`secrets_scan`/`exfil_output_scan` はすべてデータ駆動の正規表現ルール(`rules/*.json`)に基づく。未知の攻撃・難読化・新しいツールのコマンド体系など、ルールに存在しないパターンは検出できない。
+- **semantic判定の確率性(検出漏れあり)**: `exfil_guard` の semantic カテゴリはヘッドレスClaude(`claude -p`)による確率的な判定であり、`ask` 専用(`deny` には昇格しない)。LLMの判定ミス・タイムアウト・`claude` CLI不在時のフォールバック(自動スキップ)により、機微情報が検出されずに通過する場合がある。
+- **文脈依存PII(人名等)の完全検出**: メールアドレスやクレジットカード番号のような形式的パターンは正規表現+バリデータ(Luhn・マイナンバーのチェックデジット)で機械的に検出できるが、人名・所属・肩書きのように文脈でしか機微性が判断できない情報は正規表現では検出できない。semanticカテゴリがベストエフォートで補完するが、上記のとおり確率的であり完全ではない。
+
+保証レベルのまとめ: **正規表現+組織定義パターンで機械的に判定可能なものは確実に止め、それ以外はsemanticでベストエフォート検出する**、というのが本Hooks集の一貫した設計方針である。
+
+## 4. 既知の実装上の限界(実装レビューで判明した事項)
+
+以下は実装時のレビューで明らかになった、個別Hookの具体的な検出漏れ・過剰検知である。詳細は各Hookのリファレンスにも記載している。
+
+1. **secrets_guard: 裸のファイル名(拡張子なし)のBash直接アクセスは検知漏れとなる(D13)** — `secrets_guard` のBashトークン検査は「パス形式のトークン」のみを対象にしている(`/` を含む、`.`/`~` で始まる、または `.` を含むトークンのみ)。これは `grep credentials` や `find -name "*.pem"` のような検索コマンドまで解除不能denyにしてしまうと実用性を損なうためのトレードオフである。結果として、`cat credentials`(パス区切り・ドット・チルダを一切含まない裸のファイル名)のような直接アクセスは検査対象から外れ、検知漏れとなる。一方 `~/.aws/credentials` のようなパス形式であれば捕捉される。詳細: [docs/hooks/secrets_guard.md](hooks/secrets_guard.md)。
+2. **exfil_output_scan: redactマスキングは1ルールにつき20件まで(D12)** — `scan_text` は同一ルール内で重複しない完全一致文字列を最大20件(`MAX_FINDINGS_PER_RULE`)まで収集する。1つの応答内に同一ルールで21件目以降の異なるシークレット・PIIが含まれる場合、それらはマスキングされずに応答へ残る。詳細: [docs/hooks/exfil_output_scan.md](hooks/exfil_output_scan.md)。
+3. **bash_guard: `rm` のフラグトークンが9個以上あると検知漏れとなる** — `rm-recursive-or-force`(ask)・`rm-root-or-home`(deny)の正規表現はReDoS対策として `(?:-\S+\s+){0,8}` でオプショントークンを最大8個までしか許容していない。フラグを9個以上並べて `-r`/`-f` を隠すコマンドは、この上限を超えるため検出を回避できる。詳細: [docs/hooks/bash_guard.md](hooks/bash_guard.md)。
+4. **bash_guard: クォート除去により文字列リテラルも過剰検知される** — 判定前にコマンド文字列からクォート文字(`"`/`'`)を除去してから照合するため、`echo 'rm -rf /'` のような、実行内容としては無害な文字列リテラルを含むコマンドも `rm-root-or-home` に一致し `deny` になり得る。検知漏れよりも誤検知を許容する設計判断である。詳細: [docs/hooks/bash_guard.md](hooks/bash_guard.md)。
+5. **exfil_guard: semantic判定は確率的でありask専用・fail-open** — ヘッドレスClaude呼び出しによる判定であるため検出漏れ・誤判定があり得る。`deny` には使わず `ask` にのみ変換する。`claude` CLIが `PATH` 上に無い環境では自動的にスキップされ、正規表現ベースの他カテゴリのみで動作を継続する(判定不能を理由にツール実行を止めることはない)。詳細: [docs/hooks/exfil_guard.md](hooks/exfil_guard.md)。
+
+## 5. fail-open / fail-close 方針
+
+- **原則: fail-open + 可視化**。Hookスクリプト自体が例外を送出しても、ツール実行そのものは止めない(`exit 0`)。ただし `systemMessage` で「ガードが動作しなかった」ことを必ずユーザーへ通知する(`hook_io.fail_open`)。対象: `exfil_guard`、`exfil_output_scan`、`quality_gate`、`secrets_scan`、`audit_log`(監査ログ書き込み失敗は無視して開発を止めない)。
+- **例外: fail-close**。`bash_guard`・`secrets_guard` の **deny層判定中の例外のみ** は安全側に倒し、`ask` を返してユーザーの確認を求める(黙って通過させない)。
+- **タイムアウト**: 各Hookは軽量に保つ方針で、`quality_gate` のみ長め(90秒、内部コマンドは45秒)のtimeoutを `hooks/hooks.json` で明示している。`exfil_guard` はsemantic判定(ヘッドレスClaude呼び出し、最大30秒)を含むため60秒。他のHookは概ね10〜15秒。
+- **監査ログ書き込み失敗は無視**する(開発を止めない、スペック セクション8)。
+
+## 6. 監査ログの機微情報
+
+`audit_log` は `tool_input` をJSON文字列化し**先頭500文字**を `tool_summary` として記録する。この500文字の中には、実行されたコマンドや編集内容の一部としてシークレット・PIIがそのまま残り得る。
+
+- ログの出力先は既定で `.claude/logs/audit-YYYYMMDD.jsonl`(プロジェクトの `cwd` 起点の相対パス)。
+- このパスは `.gitignore` により除外済みである(`logs/`、`.claude/logs/`、`*.jsonl`)。したがって**リポジトリへコミットされることは無い**が、**ローカルディスク上には機微情報を含み得るログファイルがそのまま残る**。ログの取り扱い(保存期間・アクセス権限・削除)は利用者側の運用に委ねられる。
+
+関連: [docs/hooks/audit_log.md](hooks/audit_log.md)、[docs/configuration.md](configuration.md)。
