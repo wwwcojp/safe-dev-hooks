@@ -1,0 +1,63 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/pre_tool_use/bash_guard.py\"", "timeout": 10}
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write|Bash",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/pre_tool_use/secrets_guard.py\"", "timeout": 10}
+        ]
+      },
+      {
+        "matcher": "mcp__.*|WebFetch|WebSearch",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/pre_tool_use/exfil_guard.py\"", "timeout": 60, "statusMessage": "外部送信ペイロードを検査中"}
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/audit/audit_log.py\"", "timeout": 10, "async": true}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/post_tool_use/quality_gate.py\"", "timeout": 90},
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/post_tool_use/secrets_scan.py\"", "timeout": 10}
+        ]
+      },
+      {
+        "matcher": "mcp__.*|WebFetch|WebSearch",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/post_tool_use/exfil_output_scan.py\"", "timeout": 15}
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/audit/audit_log.py\"", "timeout": 10, "async": true}
+        ]
+      }
+    ],
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/audit/audit_log.py\"", "timeout": 10, "async": true}]}
+    ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/audit/audit_log.py\"", "timeout": 10, "async": true}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/audit/audit_log.py\"", "timeout": 10, "async": true}]}
+    ],
+    "Notification": [
+      {"hooks": [{"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/notification/notify.py\"", "timeout": 10}]}
+    ]
+  }
+}

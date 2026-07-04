@@ -1,0 +1,11 @@
+{
+  "name": "claude-code-hooks",
+  "owner": {"name": "wwwcojp"},
+  "plugins": [
+    {
+      "name": "safe-dev-hooks",
+      "source": "./",
+      "description": "Claude Codeで安全に開発するためのHooks集"
+    }
+  ]
+}

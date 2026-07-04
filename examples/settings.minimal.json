@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/pre_tool_use/bash_guard.py\"", "timeout": 10}
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write|Bash",
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/claude-code-hooks/hooks/pre_tool_use/secrets_guard.py\"", "timeout": 10}
+        ]
+      }
+    ]
+  }
+}
