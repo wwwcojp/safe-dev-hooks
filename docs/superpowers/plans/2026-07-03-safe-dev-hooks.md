@@ -993,6 +993,11 @@ def evaluate(event: dict, cfg: dict) -> dict | None:
             "reason": f"機密ファイルへのアクセスを遮断: {target}(該当ルール: {hit})",
         }
     return None
+```
+
+> **実装時変更(D13・ユーザー承認済み)**: 上記の「全トークン検査」はレビュー指摘により「パス形式トークンのみ検査」へ変更した(`_looks_like_path`: globメタ文字含みは除外、`/`含み・`.`/`~`始まり・`.`含みのみ対象)。`grep credentials` 等の検索コマンドの過剰denyを防ぐため。
+
+```python
 
 
 def main() -> None:
