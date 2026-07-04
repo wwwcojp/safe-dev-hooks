@@ -17,30 +17,31 @@ WRITE_TOOLS = ("Edit", "Write")
 COMMAND_TIMEOUT_SEC = 45
 OUTPUT_TAIL_CHARS = 1500
 
-# 自動検出: (globパターン, 必要な実行ファイル, 前提設定ファイル(任意), コマンド)
+# 自動検出: (globパターン, 必要な実行ファイル, 前提設定ファイル(いずれか必須), コマンド)
 AUTO_DETECT = [
-    ("*.py", "ruff", None, "ruff check {file}"),
-    ("*.rs", "rustfmt", None, "rustfmt --check {file}"),
-    ("*.js|*.jsx|*.ts|*.tsx", "npx", "package.json", "npx --no-install eslint {file}"),
+    ("*.py", "ruff", ("pyproject.toml", "ruff.toml", ".ruff.toml"), "ruff check {file}"),
+    ("*.rs", "rustfmt", ("Cargo.toml",), "rustfmt --check {file}"),
+    ("*.js|*.jsx|*.ts|*.tsx", "npx", ("package.json",), "npx --no-install eslint {file}"),
 ]
 
 
 def resolve_commands(file_path: str, cfg: dict, cwd: str) -> list:
     name = Path(file_path).name
+    quoted = shlex.quote(file_path)
     commands = []
     for pattern, cmds in (cfg.get("commands") or {}).items():
         if fnmatch.fnmatch(name, pattern):
-            commands += [c.replace("{file}", file_path) for c in cmds]
+            commands += [c.replace("{file}", quoted) for c in cmds]
     if commands:
         return commands
-    for patterns_str, exe, marker, cmd in AUTO_DETECT:
+    for patterns_str, exe, markers, cmd in AUTO_DETECT:
         if not any(fnmatch.fnmatch(name, p) for p in patterns_str.split("|")):
             continue
         if shutil.which(exe) is None:
             continue
-        if marker and not (Path(cwd) / marker).is_file():
+        if not any((Path(cwd) / m).is_file() for m in markers):
             continue
-        commands.append(cmd.replace("{file}", file_path))
+        commands.append(cmd.replace("{file}", quoted))
     return commands
 
 

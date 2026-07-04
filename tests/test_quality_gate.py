@@ -1,5 +1,6 @@
 import io
 import json
+import shlex
 
 import pytest
 
@@ -18,6 +19,21 @@ def test_resolve_commands_from_config(tmp_path):
 def test_resolve_commands_no_match(tmp_path):
     cfg = {"commands": {"*.py": ["mylint {file}"]}}
     assert qg.resolve_commands(str(tmp_path / "app.md"), cfg, str(tmp_path)) == []
+
+
+def test_resolve_commands_quotes_spaced_paths(tmp_path):
+    cfg = {"commands": {"*.py": ["mylint {file}"]}}
+    spaced = str(tmp_path / "my dir" / "app.py")
+    got = qg.resolve_commands(spaced, cfg, str(tmp_path))
+    assert got and shlex.split(got[0])[-1] == spaced
+
+
+def test_autodetect_requires_project_marker(tmp_path, monkeypatch):
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    assert qg.resolve_commands(str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path)) == []
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    got = qg.resolve_commands(str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path))
+    assert got and got[0].startswith("ruff check")
 
 
 def test_run_checks_collects_failures(tmp_path):
