@@ -34,7 +34,7 @@ def test_hooks_json_wires_all_events():
 
 
 def test_marketplace_manifest():
-    m = _load("marketplace.json")
+    m = _load(".claude-plugin/marketplace.json")
     assert m["plugins"][0]["name"] == "safe-dev-hooks"
 
 
