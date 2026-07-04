@@ -26,10 +26,6 @@ def server_prefix(tool_name: str) -> str:
     return "__".join(parts[:2]) if len(parts) >= 2 else tool_name
 
 
-def _mask(value: str) -> str:
-    return value[:4] + "…"
-
-
 def evaluate(payload_text: str, cfg: dict) -> dict | None:
     cats = cfg.get("categories", {})
     findings: list[dict] = []

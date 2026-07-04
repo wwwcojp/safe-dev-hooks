@@ -74,7 +74,9 @@ Minimal example:
 
 See [docs/configuration.md](docs/configuration.md) (Japanese) for the full schema, the 3-layer merge details, and personal/team/high-security configuration presets.
 
-## 5. Verifying it works
+## 5. Verifying it works (required first-run warmup)
+
+Each hook script is a `uv run --script` shebang, so its very first invocation on a machine may need to fetch/install a Python interpreter, which can take longer than the hooks' own 10-second timeout. Run the command below once, right after installation, so `uv` finishes that setup outside of an actual hook invocation — treat it as a mandatory warmup step, not just an optional sanity check.
 
 You can confirm `bash_guard` denies a destructive command by piping a mock event straight into the hook script:
 

@@ -14,7 +14,7 @@
 このHookは `deny`/`ask`/`block` を返さない通知専用Hookである。
 
 - `notify.command` が設定されている場合: コマンド文字列中の `{message}` を `event.message`(シェルエスケープ済み)で置換し、`subprocess.run` で実行する(タイムアウト10秒)。実行結果やエラーは無視される。この場合ターミナルベルは鳴らさない。
-- `notify.command` が未設定(既定値 `null`)の場合: `hookSpecificOutput` は使わず、`{"terminalSequence": ""}`(ベル文字)を返してターミナルへベルを送る。
+- `notify.command` が未設定(既定値 `null`)の場合: `hookSpecificOutput` は使わず、`{"terminalSequence": "\u0007"}`(ベル文字)を返してターミナルへベルを送る。
 
 ## 設定キー
 

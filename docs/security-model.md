@@ -44,6 +44,7 @@
 - **原則: fail-open + 可視化**。Hookスクリプト自体が例外を送出しても、ツール実行そのものは止めない(`exit 0`)。ただし `systemMessage` で「ガードが動作しなかった」ことを必ずユーザーへ通知する(`hook_io.fail_open`)。対象: `exfil_guard`、`exfil_output_scan`、`quality_gate`、`secrets_scan`、`audit_log`(監査ログ書き込み失敗は無視して開発を止めない)。
 - **例外: fail-close**。`bash_guard`・`secrets_guard` の **deny層判定中の例外のみ** は安全側に倒し、`ask` を返してユーザーの確認を求める(黙って通過させない)。
 - **タイムアウト**: 各Hookは軽量に保つ方針で、`quality_gate` のみ長め(90秒、内部コマンドは45秒)のtimeoutを `hooks/hooks.json` で明示している。`exfil_guard` はsemantic判定(ヘッドレスClaude呼び出し、最大30秒)を含むため60秒。他のHookは概ね10〜15秒。
+- **初回実行の必須ウォームアップ**: 各Hookは `uv run --script` シバンで動くため、そのマシンでの最初の実行時にPythonインタプリタの取得・インストールが発生し得る。この処理は上記のHookタイムアウト(概ね10秒)を超え得るため、導入直後に [README.md](../README.md)/[README.ja.md](../README.ja.md) の動作確認コマンドを一度実行し、実際のHook呼び出しより前にセットアップを完了させることを必須の手順として案内している。
 - **監査ログ書き込み失敗は無視**する(開発を止めない、スペック セクション8)。
 
 ## 6. 監査ログの機微情報
