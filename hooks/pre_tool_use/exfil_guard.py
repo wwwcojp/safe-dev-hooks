@@ -4,6 +4,10 @@
 # ///
 """外部送信ガード: MCP/WebFetch/WebSearch への引数に含まれる機微情報を検査する。"""
 import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -59,9 +63,35 @@ def evaluate(payload_text: str, cfg: dict) -> dict | None:
     }
 
 
+SEMANTIC_ENV_GUARD = "SAFE_DEV_HOOKS_SEMANTIC"
+SEMANTIC_TIMEOUT_SEC = 30
+SEMANTIC_MAX_PAYLOAD = 4000
+
+
 def semantic_check(payload_text: str, cfg: dict) -> dict | None:
-    """LLMによる意味的判定(Task 7 で実装)。"""
-    return None
+    """ヘッドレスClaudeで機微情報の可能性を判定する。判定不能時はNone(fail-open)。"""
+    sem = cfg.get("semantic", {})
+    if len(payload_text) < sem.get("min_payload_chars", 200):
+        return None
+    if os.environ.get(SEMANTIC_ENV_GUARD) == "1":  # 再帰防止
+        return None
+    if shutil.which("claude") is None:
+        return None
+    template = (patterns.RULES_DIR / "semantic_prompt.md").read_text(encoding="utf-8")
+    prompt = template.replace("{payload}", payload_text[:SEMANTIC_MAX_PAYLOAD])
+    env = dict(os.environ, **{SEMANTIC_ENV_GUARD: "1"})
+    try:
+        r = subprocess.run(
+            ["claude", "-p", prompt, "--model", sem.get("model", "haiku")],
+            capture_output=True, text=True, timeout=SEMANTIC_TIMEOUT_SEC, env=env,
+        )
+        if r.returncode != 0:
+            return None
+        m = re.search(r"\{.*\}", r.stdout, re.DOTALL)
+        data = json.loads(m.group()) if m else {}
+    except Exception:
+        return None
+    return data if data.get("sensitive") else None
 
 
 def main() -> None:
