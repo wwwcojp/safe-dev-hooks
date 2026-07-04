@@ -47,9 +47,21 @@ def test_examples_are_valid_json():
 
 
 def test_all_rules_json_parse_and_regex_compile():
+    checked = 0
     for path in (REPO / "rules").glob("*.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
-        items = data if isinstance(data, list) else []
-        for item in items:
-            assert "name" in item and "regex" in item, path.name
-            re.compile(item["regex"])
+        if isinstance(data, list):
+            for item in data:
+                assert "name" in item and "regex" in item, path.name
+                re.compile(item["regex"])
+        elif path.name == "sensitive_paths.json":
+            for key in ("protected", "protected_dirs", "allow"):
+                assert isinstance(data[key], list) and data[key], path.name
+                assert all(isinstance(v, str) and v for v in data[key]), path.name
+        elif path.name == "confidential_markers.json":
+            assert isinstance(data["markers"], list) and data["markers"], path.name
+            assert all(isinstance(v, str) and v for v in data["markers"]), path.name
+        else:
+            raise AssertionError(f"未知のルールファイル形式: {path.name}")
+        checked += 1
+    assert checked >= 6  # 全ルールファイルが検証対象に入っていること
