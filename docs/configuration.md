@@ -48,8 +48,7 @@
       "semantic": "ask"                      // ask | off(semanticはdeny不可)
     },
     "semantic": {
-      "model": "haiku",                      // ヘッドレス判定(claude -p --model)に使うモデル
-      "min_payload_chars": 200               // これ未満のペイロードは判定スキップ
+      "model": "haiku"                       // ヘッドレス判定(claude -p --model)に使うモデル
     },
     "custom_patterns": [],                   // [{ "name": "...", "regex": "..." }, ...]
     "trusted_servers": []                    // ["mcp__internal-kb", ...] 検査スキップ対象

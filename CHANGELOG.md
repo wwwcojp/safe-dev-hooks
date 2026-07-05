@@ -2,6 +2,12 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### Changed
+
+- `exfil_guard` の semantic 判定からペイロード長ゲーティング(200文字未満スキップ)を撤廃し、長さに関わらず必ず判定するように変更(D16)。設定キー `exfil_guard.semantic.min_payload_chars` は削除
+
 ## [0.1.0] - 2026-07-04
 
 ### Added

@@ -39,9 +39,10 @@
 
 1. `mode` が `detect` であり、正規表現ベースの `deny`/`ask` が未確定
 2. `categories.semantic` が `off` ではない
-3. ペイロード長が `semantic.min_payload_chars`(既定200文字)以上
-4. `SAFE_DEV_HOOKS_SEMANTIC=1` 環境変数が未設定(ヘッドレスClaude呼び出し自体の再帰発火を防止するガード)
-5. `claude` コマンドが `PATH` 上に存在する
+3. `SAFE_DEV_HOOKS_SEMANTIC=1` 環境変数が未設定(ヘッドレスClaude呼び出し自体の再帰発火を防止するガード)
+4. `claude` コマンドが `PATH` 上に存在する
+
+ペイロード長による発火制限は設けない(D16)。短い検索クエリ等でも必ず判定が走るため、対象ツールの呼び出しごとにヘッドレスClaude実行のレイテンシ(数秒程度)とトークンコストが発生する点に注意。コストを抑えたい場合は `categories.semantic: "off"` または `trusted_servers` を利用する。
 
 判定結果が `{"sensitive": true, ...}` であれば `ask`(理由に `reason` を含める)。`false`・タイムアウト(30秒)・JSON解析失敗・`claude` 不在時はいずれも判定なし(fail-open、素通り)。
 
@@ -63,7 +64,6 @@ semantic判定へ渡すペイロードはコスト・レイテンシ抑制のた
 | `exfil_guard.categories.custom` | `"ask"` | `deny`/`ask`/`off` |
 | `exfil_guard.categories.semantic` | `"ask"` | `ask`/`off` のみ |
 | `exfil_guard.semantic.model` | `"haiku"` | ヘッドレス判定に使うモデル名(`claude -p --model` に渡す) |
-| `exfil_guard.semantic.min_payload_chars` | `200` | これ未満のペイロード長は semantic 判定をスキップ |
 | `exfil_guard.custom_patterns` | `[]` | `{"name": ..., "regex": ...}` の配列 |
 | `exfil_guard.trusted_servers` | `[]` | 検査を完全スキップするMCPサーバーの `mcp__<server>` プレフィックス一覧 |
 
@@ -71,7 +71,7 @@ semantic判定へ渡すペイロードはコスト・レイテンシ抑制のた
 
 - **semantic判定は確率的(D11)**: LLM呼び出しによる判定のため検出漏れ・誤検出があり得る。`ask` にのみ使用し `deny` には昇格させない設計。判定失敗・タイムアウト・`claude` CLI不在時は fail-open(検査スキップ、素通り)となる。
 - **正規表現+組織定義パターンで機械的に判定可能なものは確実に止め、それ以外はsemanticでベストエフォート検出**という保証レベルであり、文脈依存の機微情報(人名等)を正規表現側で完全に検出することはできない。
-- semanticはペイロードが `min_payload_chars` 未満だとスキップされるため、短い機微情報(単発のIDや固有名詞のみ等)は検出対象にならない。
 - semantic判定はペイロード先頭 `SEMANTIC_MAX_PAYLOAD`(4000文字)のみを対象とするため、それより後方にのみ機微情報が含まれる長大なペイロードは検出できない。
+- semantic判定はペイロード長に関わらず必ず実行される(D16)ため、対象ツール呼び出しごとにレイテンシ・トークンコストが発生する。
 - `always` モードでも `trusted_servers` は完全除外されるため、信頼済みサーバー設定を誤ると検査を素通りする。
 - 判定不能な例外発生時は fail-open(`hook_io.fail_open`)であり、ツール実行は継続される(`systemMessage` で可視化はされる)。

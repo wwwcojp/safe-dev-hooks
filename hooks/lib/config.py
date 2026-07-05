@@ -19,7 +19,7 @@ DEFAULTS: dict = {
             "custom": "ask",
             "semantic": "ask",
         },
-        "semantic": {"model": "haiku", "min_payload_chars": 200},
+        "semantic": {"model": "haiku"},
         "custom_patterns": [],
         "trusted_servers": [],
     },

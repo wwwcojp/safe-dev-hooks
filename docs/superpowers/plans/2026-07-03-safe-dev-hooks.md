@@ -1417,8 +1417,8 @@ SEMANTIC_MAX_PAYLOAD = 4000
 def semantic_check(payload_text: str, cfg: dict) -> dict | None:
     """ヘッドレスClaudeで機微情報の可能性を判定する。判定不能時はNone(fail-open)。"""
     sem = cfg.get("semantic", {})
-    if len(payload_text) < sem.get("min_payload_chars", 200):
-        return None
+    # 注(D16・ユーザー指示): 当初案にあったペイロード長ゲーティング
+    # (min_payload_chars 未満スキップ)はリリース前に撤廃された。
     if os.environ.get(SEMANTIC_ENV_GUARD) == "1":  # 再帰防止
         return None
     if shutil.which("claude") is None:

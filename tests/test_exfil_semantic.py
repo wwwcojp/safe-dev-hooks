@@ -6,7 +6,7 @@ exfil_guard = load_hook("pre_tool_use/exfil_guard.py")
 
 CFG = {
     "categories": {"semantic": "ask"},
-    "semantic": {"model": "haiku", "min_payload_chars": 10},
+    "semantic": {"model": "haiku"},
 }
 
 LONG_PAYLOAD = "当社の第3四半期の未公開売上見込みは前年比12%減で、田中部長の人事評価は..." * 3
@@ -45,14 +45,19 @@ def test_semantic_not_sensitive_returns_none(monkeypatch):
     assert exfil_guard.semantic_check(LONG_PAYLOAD, CFG) is None
 
 
-def test_semantic_skips_short_payload(monkeypatch):
+def test_semantic_checks_even_short_payload(monkeypatch):
+    """ペイロード長によるスキップは行わず、短い入力も必ず判定する(D16)。"""
     monkeypatch.setattr(exfil_guard.shutil, "which", lambda _: "/usr/bin/claude")
+    called = {}
 
-    def boom(*a, **k):
-        raise AssertionError("呼ばれてはいけない")
+    def fake_run(cmd, **kwargs):
+        called["yes"] = True
+        return FakeCompleted('{"sensitive": true, "reason": "顧客名"}')
 
-    monkeypatch.setattr(exfil_guard.subprocess, "run", boom)
-    assert exfil_guard.semantic_check("短い", CFG) is None
+    monkeypatch.setattr(exfil_guard.subprocess, "run", fake_run)
+    result = exfil_guard.semantic_check("短い", CFG)
+    assert called.get("yes") is True
+    assert result == {"sensitive": True, "reason": "顧客名"}
 
 
 def test_semantic_skips_when_cli_missing(monkeypatch):
