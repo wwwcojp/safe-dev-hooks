@@ -14,6 +14,8 @@
 - **悪意あるユーザーへの防御**。ローカル環境で `claude` を操作できるユーザーは、Claude Codeの設定(`disableAllHooks`)や `settings.json` そのものを書き換えることで、任意のHookを無効化できる。悪意を持ってこれを行うユーザーからシステムを守る仕組みではない。
 - **悪意あるプラグイン・MCPサーバーへの防御**。信頼できないプラグインやMCPサーバーを導入すること自体のリスクは、このHooks集の対象外である。
 
+**対応プラットフォーム**: Linux(WSL2含む)とmacOSを対象とする。パス判定はPOSIX前提であり(ホーム保護は `/home/<user>`・`/Users/<user>`・`~`・`$HOME` を対象)、Windowsネイティブ環境(`C:\Users\...` 等のパス体系)は検証対象外。
+
 ## 2. 保証すること
 
 - **deny層パターンの決定論的ブロック**: `bash_guard`/`secrets_guard` の deny 判定は正規表現による決定論的な照合であり、Claude Codeの permission mode(`acceptEdits`/`bypassPermissions` 等)に関わらず、Hookが有効である限り常に同じ結果でブロックされる。

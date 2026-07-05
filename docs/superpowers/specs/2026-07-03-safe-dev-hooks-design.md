@@ -65,7 +65,7 @@ claude-code-hooks/
 
 | Hook | イベント / matcher | 動作 |
 |------|--------------------|------|
-| bash_guard | PreToolUse / `Bash` | 回復不能系(rm -rf /、sudo rm、保護ブランチへのforce push、mkfs、dd、fork bomb、DROP TABLE等)は deny。グレー系(git reset --hard、git clean -f、rm -rf <プロジェクト内>、curl\|bash等)は ask。`&&` `;` `\|\|` で連結されたコマンドも分解して検査 |
+| bash_guard | PreToolUse / `Bash` | 回復不能系(rm -rf /、ホームディレクトリ全体のrm(D14: /home・/Users直下)、sudo rm、保護ブランチへのforce push、mkfs、dd、fork bomb、SQLクライアント実行文脈でのDROP TABLE/TRUNCATE(D14))は deny。グレー系(git reset --hard、git clean -f、rm -rf <プロジェクト内>、curl\|bash等)は ask。`&&` `;` `\|\|` で連結されたコマンドも分解して検査 |
 | secrets_guard | PreToolUse / `Read\|Edit\|Write\|Bash` | .env(.env.example等は許可)、*.pem / id_rsa、~/.ssh/、~/.aws/credentials 等への読取・編集・cat を deny |
 | exfil_guard | PreToolUse / `mcp__.*\|WebFetch\|WebSearch` | 外部送信引数のDLP検査(詳細は3.2) |
 | exfil_output_scan | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | 応答に含まれるシークレット・PIIの検出。警告(additionalContext)またはマスキング(updatedToolOutput)を設定で選択 |

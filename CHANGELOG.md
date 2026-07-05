@@ -2,13 +2,7 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
-## [Unreleased]
-
-### Changed
-
-- `exfil_guard` の semantic 判定からペイロード長ゲーティング(200文字未満スキップ)を撤廃し、長さに関わらず必ず判定するように変更(D16)。設定キー `exfil_guard.semantic.min_payload_chars` は削除
-
-## [0.1.0] - 2026-07-04
+## [0.1.0] - 2026-07-05
 
 ### Added
 
@@ -25,11 +19,14 @@
 - **データ駆動ルール定義**: `rules/bash_deny.json`、`rules/bash_ask.json`、`rules/sensitive_paths.json`、`rules/secret_patterns.json`、`rules/pii_patterns.json`、`rules/confidential_markers.json`、`rules/semantic_prompt.md`
 - **配布**: `.claude-plugin/plugin.json` + `marketplace.json` によるプラグイン配布(`/plugin marketplace add` → `/plugin install safe-dev-hooks`)、`examples/settings.full.json` / `examples/settings.minimal.json` による手動導入スニペット
 - **CI**: GitHub Actions で `ruff check` と `pytest` を実行(`.github/workflows/ci.yml`)
-- **テスト**: 125件のpytestケース(危険系/グレー系/安全系、`&&`・`;`・`||` 連結やクォート・エスケープ等のバイパス試行を含む)
+- **テスト**: 133件のpytestケース(危険系/グレー系/安全系、`&&`・`;`・`||` 連結やクォート・エスケープ等のバイパス試行、ReDoS回帰を含む)
 - **ドキュメント**: README(日英)、Hookごとのリファレンス(`docs/hooks/*.md`)、設定リファレンス(`docs/configuration.md`)、セキュリティモデル(`docs/security-model.md`)、ベストプラクティス調査(`docs/best-practices.md`)、CONTRIBUTING.md
 
 ### Notes
 
-- 実装レビューにより設計時点からの変更が2件ある(設計ドキュメントの決定事項ログ D12・D13):
-  - `exfil_output_scan` のredactマスキングは1ルールにつき最大20件までの検出に限定(`MAX_FINDINGS_PER_RULE`)
-  - `secrets_guard` のBashトークン検査はパス形式のトークンのみを対象とし、裸のファイル名(拡張子なし)の直接アクセスは既知の限界として残っている
+- 実装・最終レビューにより設計時点からの変更がある(設計ドキュメントの決定事項ログ D12〜D16):
+  - D12: `exfil_output_scan` のredactマスキングは1ルールにつき最大20件までの検出に限定(`MAX_FINDINGS_PER_RULE`)
+  - D13: `secrets_guard` のBashトークン検査はパス形式のトークンのみを対象とし、裸のファイル名(拡張子なし)の直接アクセスは既知の限界として残っている
+  - D14: `bash_guard` deny層の誤検知を除去(ホーム保護は `/home/<user>`・`/Users/<user>` 直下全体のみ、SQL系DROP/TRUNCATEはSQLクライアント実行文脈に限定)
+  - D15: 設定のenum値(mode/action/categories.*)を検証し、不正値は安全側の既定値へフォールバック
+  - D16: semantic判定のペイロード長ゲーティング(200文字未満スキップ)を撤廃し、長さに関わらず必ず判定(設定キー `min_payload_chars` は削除)

@@ -25,6 +25,7 @@ DENY_CASES = [
     "psql -c 'DROP TABLE users;'",
     "rm -rf /home/alice",
     "rm -rf /home",
+    "rm -rf /Users/alice",
 ]
 
 ASK_CASES = [
@@ -110,8 +111,12 @@ def test_rm_regex_is_redos_safe():
 
 def test_deep_project_paths_fall_to_ask_not_deny():
     # ホーム配下の深いパスの再帰削除は deny ではなく ask(rm-recursive-or-force)
-    v = bash_guard.evaluate("rm -rf /home/alice/myproj/node_modules", CFG)
-    assert v is not None and v["decision"] == "ask"
+    for cmd in [
+        "rm -rf /home/alice/myproj/node_modules",
+        "rm -rf /Users/alice/myproj/node_modules",
+    ]:
+        v = bash_guard.evaluate(cmd, CFG)
+        assert v is not None and v["decision"] == "ask", cmd
 
 
 def test_sql_strings_without_client_context_pass():

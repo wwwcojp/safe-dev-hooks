@@ -1,4 +1,5 @@
 """ルールJSONの読込と、テキストへのパターン適用(バリデータ付き)。"""
+import functools
 import json
 import re
 from pathlib import Path
@@ -7,7 +8,10 @@ RULES_DIR = Path(__file__).resolve().parent.parent.parent / "rules"
 MAX_FINDINGS_PER_RULE = 20
 
 
+@functools.lru_cache(maxsize=None)
 def load_rules(name: str):
+    """ルールJSONを読み込む。プロセス内でキャッシュされ共有されるため、
+    呼び出し側は戻り値を変更してはならない(必要なら list()/dict() でコピーする)。"""
     return json.loads((RULES_DIR / name).read_text(encoding="utf-8"))
 
 

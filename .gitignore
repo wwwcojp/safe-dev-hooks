@@ -10,9 +10,6 @@ venv/
 dist/
 build/
 
-# uv
-uv.lock
-
 # Hooks runtime output (ローカル実行時に生成されるログ・状態ファイル)
 logs/
 .claude/logs/

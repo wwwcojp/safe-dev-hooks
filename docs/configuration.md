@@ -53,6 +53,10 @@
     "custom_patterns": [],                   // [{ "name": "...", "regex": "..." }, ...]
     "trusted_servers": []                    // ["mcp__internal-kb", ...] 検査スキップ対象
   },
+  // 注: semantic判定はペイロード長に関わらず必ず実行される(D16)ため、
+  // MCP/WebFetch/WebSearchの呼び出しごとにヘッドレスClaude実行のレイテンシ(数秒程度)と
+  // トークンコストが発生する。重い場合は categories.semantic を "off" にするか、
+  // 信頼できるサーバーを trusted_servers に登録して検査自体をスキップする。
   "exfil_output_scan": {
     "enabled": true,
     "action": "warn"                         // "warn" | "redact"(redactは文字列応答のみ有効)
