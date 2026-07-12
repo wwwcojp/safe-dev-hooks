@@ -6,6 +6,9 @@
 
 ### Added
 
+- `secrets_scan.custom_patterns`: 書き込み内容の検査にユーザー定義パターンを追加できる設定キー(`exfil_guard.custom_patterns` と同形式、ビルトインへマージ)。
+- 実ホームパス混入防止の多層ガード: プロジェクト設定 `.claude-hooks.json`(`real-home-path` パターン)、プレースホルダー規約 `.claude/rules/no-personal-paths.md`、CIリークチェック(`ci.yml`)。
+
 - `examples/notify_wrapper.sh`: `notify.command` に設定するデスクトップ通知ラッパー。実行環境を自動判別し、WSL(PowerShell/WinRTトースト)・Linuxデスクトップ(notify-send)・macOS(osascript)で通知、いずれも使えなければ `/dev/tty` へのベル出力(devcontainer等でも可聴)、制御端末も無ければ標準エラーへのベル出力にフォールバックする。
 
 ## [0.1.0] - 2026-07-05

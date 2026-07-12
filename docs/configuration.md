@@ -67,7 +67,8 @@
     "commands": {}                           // { "<ファイル名glob>": ["ruff check {file}", ...] }
   },
   "secrets_scan": {
-    "enabled": true
+    "enabled": true,
+    "custom_patterns": []                    // [{ "name": "...", "regex": "..." }, ...] ビルトインへマージ
   },
   "audit_log": {
     "enabled": true,

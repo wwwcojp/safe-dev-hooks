@@ -27,7 +27,11 @@ def main() -> None:
         hook_io.finalize(None, cfg_all)
     text = extract_written_text(event.get("tool_input") or {})
     try:
-        findings = patterns.scan_text(text, patterns.load_rules("secret_patterns.json"))
+        rules = list(patterns.load_rules("secret_patterns.json")) + [
+            {"name": p["name"], "regex": p["regex"]}
+            for p in cfg.get("custom_patterns", [])
+        ]
+        findings = patterns.scan_text(text, rules)
     except Exception as exc:
         hook_io.fail_open("secrets_scan", exc)
         return

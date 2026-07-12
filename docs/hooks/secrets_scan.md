@@ -14,7 +14,7 @@
 
 ## 判定基準
 
-`tool_input` の `content` / `new_string` / `new_source` キー(存在するもののみ)を連結したテキストに対して `rules/secret_patterns.json` の全ルールを適用する。
+`tool_input` の `content` / `new_string` / `new_source` キー(存在するもののみ)を連結したテキストに対して、`rules/secret_patterns.json` の全ルールと `secrets_scan.custom_patterns` の追加ルールを適用する。
 
 ### block になる条件
 
@@ -39,13 +39,14 @@
 | キー | 既定値 | 説明 |
 |---|---|---|
 | `secrets_scan.enabled` | `true` | falseで本Hookを無効化 |
+| `secrets_scan.custom_patterns` | `[]` | ビルトインへマージする追加ルール。`[{"name": "...", "regex": "..."}]` 形式(`exfil_guard.custom_patterns` と同形式)。プロジェクト固有の禁止文字列(実ホームパス・内部ホスト名等)の書き込みブロックに使う |
 
-追加の正規表現やallowlistを設定するキーは無い(ビルトインの `rules/secret_patterns.json` のみを使用)。
+allowlist(検出除外)を設定するキーは無い。
 
 ## 既知の限界
 
 - **`NotebookEdit` は既定配線では発火しない**: コード自体は `NotebookEdit` の `new_source` を認識するが、`hooks/hooks.json` の `PostToolUse` matcher は `Edit|Write` のみのため、ノートブック編集を検査したい場合はユーザー側で matcher に `NotebookEdit` を追加する必要がある。
 - **`generic-credential` はクォート必須**: `API_KEY=abcdefgh12345`(クォート無し)のような代入は正規表現がクォート文字を要求するため一致せず、検出されない。
 - 検査対象は「今回の編集で書き込まれる差分文字列」のみであり、編集後のファイル全体は再走査しない。既存ファイル中の別箇所にあるシークレットは対象外。
-- PII・機密マーカー・カスタムパターンは検査しない(必要であれば `exfil_output_scan`/`exfil_guard` のカテゴリ、または `.claude-hooks.json` の該当設定を利用する)。
+- PII・機密マーカーは検査しない(必要であれば `exfil_output_scan`/`exfil_guard` のカテゴリを利用するか、`secrets_scan.custom_patterns` に個別パターンを追加する)。
 - Hook自体の異常時は fail-open(検査スキップ、編集は通過)。

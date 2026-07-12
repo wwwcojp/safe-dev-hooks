@@ -9,6 +9,7 @@ def test_defaults_when_no_files(monkeypatch, tmp_path):
     assert cfg["exfil_guard"]["mode"] == "detect"
     assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
     assert cfg["quality_gate"]["mode"] == "block"
+    assert cfg["secrets_scan"]["custom_patterns"] == []
     assert cfg.get("_errors", []) == []
 
 

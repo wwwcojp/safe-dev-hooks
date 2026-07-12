@@ -10,6 +10,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: 実ホームパスのリークチェック
+        run: |
+          if git grep -nP '/(home|Users)/(?!USER\b|alice\b|user\b)[A-Za-z_][A-Za-z0-9._-]*' --; then
+            echo '::error::実ホームパスの可能性がある記述を検出しました。$HOME・/home/USER・/home/alice のプレースホルダーに置き換えてください(.claude/rules/no-personal-paths.md)'
+            exit 1
+          fi
       - name: Lint
         run: uv run ruff check hooks tests
       - name: Test

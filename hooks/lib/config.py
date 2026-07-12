@@ -25,7 +25,7 @@ DEFAULTS: dict = {
     },
     "exfil_output_scan": {"enabled": True, "action": "warn"},
     "quality_gate": {"enabled": True, "mode": "block", "commands": {}},
-    "secrets_scan": {"enabled": True},
+    "secrets_scan": {"enabled": True, "custom_patterns": []},
     "audit_log": {"enabled": True, "path": ".claude/logs"},
     "notify": {"enabled": True, "command": None},
 }
