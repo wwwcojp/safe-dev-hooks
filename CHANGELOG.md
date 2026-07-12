@@ -2,7 +2,7 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
-## [Unreleased]
+## [0.2.0] - 2026-07-13
 
 ### Added
 
