@@ -23,28 +23,28 @@
 | `README.md` / `README.ja.md` | タイトル、クローンURL、`/plugin marketplace add wwwcojp/safe-dev-hooks`、パス例 `$HOME/safe-dev-hooks` |
 | `examples/settings.full.json` / `settings.minimal.json` | `$HOME/claude-code-hooks/...` → `$HOME/safe-dev-hooks/...`(計14箇所) |
 | `.claude-plugin/marketplace.json` | `"name": "claude-code-hooks"` → `"safe-dev-hooks"` |
-| `docs/best-practices.md` | 旧名参照(6箇所)を新名に更新 |
 | `docs/superpowers/2026-07-05-handoff.md` | 運用文書のため旧名参照(4箇所)を新名に更新 |
+
+`docs/best-practices.md` 内の `claude-code-hooks` を含む文字列はすべて外部リポジトリ名(disler/claude-code-hooks-mastery 等)のため変更しない。
 
 日付付きspec/plan(`2026-07-03-safe-dev-hooks-design.md`、`2026-07-03-safe-dev-hooks.md`)は変更しない。
 
 ### リポジトリ外(環境操作)
 
 1. `gh repo rename safe-dev-hooks` — GitHubリポジトリ名変更。origin remoteも自動更新される。
-2. `~/.claude/settings.json` — マーケットプレース登録の修正:
-   - マーケットプレース名 `claude-code-hooks` → `safe-dev-hooks`
-   - `path` を `$HOME/safe-dev-hooks` に変更
-   - `enabledPlugins` のキー `safe-dev-hooks@claude-code-hooks` → `safe-dev-hooks@safe-dev-hooks`
-   - 旧プラグインキャッシュ(`~/.claude/plugins/cache/claude-code-hooks`)は削除する。新名のキャッシュは次回Claude Code起動時にマーケットプレースのパスから再生成される
-3. `mv ~/safe-dev-hook ~/safe-dev-hooks` — ローカルディレクトリの再リネーム
+2. プラグイン再登録 — `~/.claude/settings.json` に加えて `~/.claude/plugins/known_marketplaces.json`・`installed_plugins.json`・キャッシュにも旧名参照があるため、手編集ではなく公式コマンドで再登録する:
+   - `claude plugin uninstall safe-dev-hooks@claude-code-hooks`
+   - `claude plugin marketplace remove claude-code-hooks`
+   - `mv ~/safe-dev-hook ~/safe-dev-hooks`(ディレクトリリネーム。再登録前に行う)
+   - `claude plugin marketplace add $HOME/safe-dev-hooks`
+   - `claude plugin install safe-dev-hooks@safe-dev-hooks`
 
 ## 実施順序
 
 1. リポジトリ内の参照更新をコミット
 2. `gh repo rename` でGitHub側をリネームし、push
-3. `~/.claude/settings.json` とプラグインキャッシュを更新
-4. 最後にローカルディレクトリを再リネーム(実行中セッションの作業ディレクトリが変わるため最終ステップとする)
-5. 新パスでセッションを開き直し、全Hookの発火スモークテストで動作確認
+3. 旧プラグイン登録の削除 → ローカルディレクトリ再リネーム → 新パスでプラグイン再登録
+4. 新パスでセッションを開き直し、全Hookの発火スモークテストで動作確認
 
 ## エラー処理・注意点
 

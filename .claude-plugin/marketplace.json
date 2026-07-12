@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-hooks",
+  "name": "safe-dev-hooks",
   "owner": {"name": "wwwcojp"},
   "plugins": [
     {

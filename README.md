@@ -1,4 +1,4 @@
-# claude-code-hooks — Hooks for developing safely with Claude Code
+# safe-dev-hooks — Hooks for developing safely with Claude Code
 
 [日本語版: README.ja.md](README.ja.md)
 
@@ -28,7 +28,7 @@ None of this defends against a malicious user — it exists to **prevent agent m
 ### Install as a plugin
 
 ```
-/plugin marketplace add wwwcojp/claude-code-hooks
+/plugin marketplace add wwwcojp/safe-dev-hooks
 /plugin install safe-dev-hooks
 ```
 
@@ -37,10 +37,10 @@ This enables all 8 hooks exactly as wired in `hooks/hooks.json`.
 ### Manual install (copy-paste partial adoption is fine too)
 
 ```bash
-git clone https://github.com/wwwcojp/claude-code-hooks.git
+git clone https://github.com/wwwcojp/safe-dev-hooks.git
 ```
 
-Merge the contents of [`examples/settings.full.json`](examples/settings.full.json) (all hooks) or [`examples/settings.minimal.json`](examples/settings.minimal.json) (`bash_guard` + `secrets_guard` only) into `~/.claude/settings.json`. Replace `$HOME/claude-code-hooks` in the paths with wherever you actually cloned the repo. Because the architecture is one-concern-per-module, you can adopt only the hooks you need.
+Merge the contents of [`examples/settings.full.json`](examples/settings.full.json) (all hooks) or [`examples/settings.minimal.json`](examples/settings.minimal.json) (`bash_guard` + `secrets_guard` only) into `~/.claude/settings.json`. Replace `$HOME/safe-dev-hooks` in the paths with wherever you actually cloned the repo. Because the architecture is one-concern-per-module, you can adopt only the hooks you need.
 
 ## 3. Hook list
 
