@@ -23,6 +23,20 @@
 | `notify.enabled` | `true` | falseで本Hookを無効化 |
 | `notify.command` | `null` | 通知時に実行するコマンド文字列。`{message}` プレースホルダーが通知メッセージに置換される。`null` ならターミナルベル |
 
+## 設定例: デスクトップ通知ラッパー
+
+[`examples/notify_wrapper.sh`](../../examples/notify_wrapper.sh) を使うと、実行環境の自動判別(WSL→Windowsトースト / Linuxデスクトップ→notify-send / macOS→osascript / いずれも無ければ標準エラーへベル出力)でデスクトップ通知に差し替えられる。
+
+```json
+{
+  "notify": {
+    "command": "bash /home/USER/safe-dev-hooks/examples/notify_wrapper.sh {message}"
+  }
+}
+```
+
+**注意**: `notify.command` は `shlex.split` + シェル無しの `subprocess.run` で実行されるため、`$HOME` やチルダは展開されない。スクリプトのパスは必ず絶対パスで記載すること。
+
 ## 既知の限界
 
 - カスタム `notify.command` の実行が失敗(コマンド不在・非ゼロ終了・タイムアウト等)しても例外は握りつぶされ、フォールバックのベルも鳴らないため、**通知が完全に無音になり得る**。
