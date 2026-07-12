@@ -25,7 +25,7 @@
 
 ## 設定例: デスクトップ通知ラッパー
 
-[`examples/notify_wrapper.sh`](../../examples/notify_wrapper.sh) を使うと、実行環境の自動判別(WSL→Windowsトースト / Linuxデスクトップ→notify-send / macOS→osascript / いずれも無ければ標準エラーへベル出力)でデスクトップ通知に差し替えられる。
+[`examples/notify_wrapper.sh`](../../examples/notify_wrapper.sh) を使うと、実行環境の自動判別(WSL→Windowsトースト / Linuxデスクトップ→notify-send / macOS→osascript)でデスクトップ通知に差し替えられる。いずれも使えない環境(devcontainer等)では、制御端末があれば `/dev/tty` へ直接ベル文字とメッセージを書き込む(本Hookはコマンドの標準出力・標準エラーを捕捉して捨てるため、`/dev/tty` 直接書き込みでないとベルが届かない)。制御端末も無ければ標準エラーへ出力する。
 
 ```json
 {

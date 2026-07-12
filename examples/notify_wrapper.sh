@@ -53,6 +53,12 @@ if command -v osascript >/dev/null 2>&1; then
     fi
 fi
 
-# フォールバック: ベル文字とメッセージを標準エラーへ
+# フォールバック: 呼び出し元(notify.py)は標準出力・標準エラーを捕捉して捨てるため、
+# 制御端末があれば /dev/tty へ直接ベル文字とメッセージを書く(devcontainer等の
+# デスクトップ通知が使えない環境でもターミナルベルを鳴らすため)。
+# 制御端末が無ければ標準エラーへ出力する。
+if printf '\a[%s] %s\n' "$title" "$message" 2>/dev/null > /dev/tty; then
+    exit 0
+fi
 printf '\a[%s] %s\n' "$title" "$message" >&2
 exit 0

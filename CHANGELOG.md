@@ -6,7 +6,7 @@
 
 ### Added
 
-- `examples/notify_wrapper.sh`: `notify.command` に設定するデスクトップ通知ラッパー。実行環境を自動判別し、WSL(PowerShell/WinRTトースト)・Linuxデスクトップ(notify-send)・macOS(osascript)で通知、いずれも使えなければ標準エラーへベル出力にフォールバックする。
+- `examples/notify_wrapper.sh`: `notify.command` に設定するデスクトップ通知ラッパー。実行環境を自動判別し、WSL(PowerShell/WinRTトースト)・Linuxデスクトップ(notify-send)・macOS(osascript)で通知、いずれも使えなければ `/dev/tty` へのベル出力(devcontainer等でも可聴)、制御端末も無ければ標準エラーへのベル出力にフォールバックする。
 
 ## [0.1.0] - 2026-07-05
 
