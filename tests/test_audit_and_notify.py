@@ -91,3 +91,24 @@ def test_notify_custom_command(monkeypatch, tmp_path, capsys):
     }
     _run(notify, monkeypatch, event, capsys)
     assert marker.exists()
+
+
+def test_is_wsl_by_env(monkeypatch):
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    assert notify._is_wsl() is True
+
+
+def test_is_wsl_by_proc_version(monkeypatch, tmp_path):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    fake = tmp_path / "version"
+    fake.write_text("Linux version 6.6.0-Microsoft-standard", encoding="utf-8")
+    monkeypatch.setattr(notify, "_PROC_VERSION", fake)
+    assert notify._is_wsl() is True
+
+
+def test_is_wsl_false_on_plain_linux(monkeypatch, tmp_path):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    fake = tmp_path / "version"
+    fake.write_text("Linux version 6.6.0-generic", encoding="utf-8")
+    monkeypatch.setattr(notify, "_PROC_VERSION", fake)
+    assert notify._is_wsl() is False

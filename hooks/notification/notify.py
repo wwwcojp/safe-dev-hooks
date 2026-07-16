@@ -3,6 +3,7 @@
 # requires-python = ">=3.10"
 # ///
 """通知イベントをターミナルベルまたは任意コマンドでユーザーへ伝える。"""
+import os
 import shlex
 import subprocess
 import sys
@@ -10,6 +11,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib import config, hook_io  # noqa: E402
+
+_PROC_VERSION = Path("/proc/version")
+
+
+def _is_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in _PROC_VERSION.read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
 
 
 def main() -> None:
