@@ -32,7 +32,7 @@
 - Consumes: 既存の `config.load_config(cwd) -> dict`(3層マージ+enum検証)
 - Produces: `load_config()["notify"]` が `{"enabled": bool, "method": "auto"|"bell", "command": str|None}` を返す。`method` の既定は `"auto"`、不正値は `"auto"` へフォールバックし `_errors` に1件記録される
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_config.py` の末尾に追加:
 
@@ -49,12 +49,12 @@ def test_notify_method_default_and_typo_fallback(monkeypatch, tmp_path):
     assert len(cfg["_errors"]) == 1
 ```
 
-- [ ] **Step 2: テストが失敗することを確認**
+- [x] **Step 2: テストが失敗することを確認**
 
 Run: `uv run pytest tests/test_config.py::test_notify_method_default_and_typo_fallback -v`
 Expected: FAIL(`KeyError: 'method'`)
 
-- [ ] **Step 3: 最小実装**
+- [x] **Step 3: 最小実装**
 
 `hooks/lib/config.py` の DEFAULTS 内:
 
@@ -73,12 +73,12 @@ _ENUM_KEYS = {
 }
 ```
 
-- [ ] **Step 4: テストが通ることを確認**
+- [x] **Step 4: テストが通ることを確認**
 
 Run: `uv run pytest tests/test_config.py -v`
 Expected: 全件 PASS(既存の enum テスト含む)
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add hooks/lib/config.py tests/test_config.py
@@ -99,7 +99,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: なし(純粋なOS判定)
 - Produces: `notify._is_wsl() -> bool`、`notify._PROC_VERSION: pathlib.Path`(テストがmonkeypatchで差し替えるモジュール定数)
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_audit_and_notify.py` の末尾に追加(`notify = load_hook("notification/notify.py")` はファイル冒頭に既存):
 
@@ -125,12 +125,12 @@ def test_is_wsl_false_on_plain_linux(monkeypatch, tmp_path):
     assert notify._is_wsl() is False
 ```
 
-- [ ] **Step 2: テストが失敗することを確認**
+- [x] **Step 2: テストが失敗することを確認**
 
 Run: `uv run pytest tests/test_audit_and_notify.py -v -k is_wsl`
 Expected: FAIL(`AttributeError: module 'notify' has no attribute '_is_wsl'`)
 
-- [ ] **Step 3: 最小実装**
+- [x] **Step 3: 最小実装**
 
 `hooks/notification/notify.py` に `import os` を追加し(import群はアルファベット順を維持)、`main()` の前に:
 
@@ -147,12 +147,12 @@ def _is_wsl() -> bool:
         return False
 ```
 
-- [ ] **Step 4: テストが通ることを確認**
+- [x] **Step 4: テストが通ることを確認**
 
 Run: `uv run pytest tests/test_audit_and_notify.py -v -k is_wsl`
 Expected: 3件 PASS
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add hooks/notification/notify.py tests/test_audit_and_notify.py
@@ -178,7 +178,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   - `notify._notify_osascript(title: str, message: str) -> bool`
   - `notify._notify_desktop(message: str) -> bool` — チェーン試行、1つでも成功したら True
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 `tests/test_audit_and_notify.py` の末尾に追加:
 
@@ -230,12 +230,12 @@ def test_desktop_chain_all_unavailable(monkeypatch):
     assert notify._notify_desktop("m") is False
 ```
 
-- [ ] **Step 2: テストが失敗することを確認**
+- [x] **Step 2: テストが失敗することを確認**
 
 Run: `uv run pytest tests/test_audit_and_notify.py -v -k "toast or desktop_chain"`
 Expected: FAIL(`AttributeError: module 'notify' has no attribute '_notify_windows_toast'` 等)
 
-- [ ] **Step 3: 最小実装**
+- [x] **Step 3: 最小実装**
 
 `hooks/notification/notify.py` に `import shutil` を追加し、`_is_wsl` の後へ:
 
@@ -313,12 +313,12 @@ def _notify_desktop(message: str) -> bool:
     return False
 ```
 
-- [ ] **Step 4: テストが通ることを確認**
+- [x] **Step 4: テストが通ることを確認**
 
 Run: `uv run pytest tests/test_audit_and_notify.py -v -k "toast or desktop_chain"`
 Expected: 3件 PASS
 
-- [ ] **Step 5: lint確認とコミット**
+- [x] **Step 5: lint確認とコミット**
 
 Run: `uv run ruff check hooks/notification/notify.py`
 Expected: `All checks passed!`
@@ -342,7 +342,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: Task 1 の `notify.method` 設定、Task 3 の `_notify_desktop(message) -> bool`
 - Produces: 優先順位 enabled → command → method(bell/auto) → ベルフォールバック の `main()`。auto成功時は出力なし(exit 0)、それ以外のベル時は `{"terminalSequence": "\u0007"}` を出力
 
-- [ ] **Step 1: 既存テストを新仕様に置き換え、失敗するテストを書く**
+- [x] **Step 1: 既存テストを新仕様に置き換え、失敗するテストを書く**
 
 `tests/test_audit_and_notify.py` の `test_notify_default_bell` を**削除**し、以下に置き換え・追加する(`test_notify_custom_command` は無変更で残す):
 
@@ -419,12 +419,12 @@ def test_notify_disabled_outputs_nothing(monkeypatch, tmp_path, capsys):
     assert out is None
 ```
 
-- [ ] **Step 2: テストが失敗することを確認**
+- [x] **Step 2: テストが失敗することを確認**
 
 Run: `uv run pytest tests/test_audit_and_notify.py -v -k notify`
 Expected: `test_notify_auto_desktop_success_outputs_nothing` と `test_notify_method_bell_skips_desktop` が FAIL(現行 `main()` は method を見ずに常にベルを返すため)。他は PASS でもよい
 
-- [ ] **Step 3: main() を置き換え**
+- [x] **Step 3: main() を置き換え**
 
 `hooks/notification/notify.py` の `main()` 全体とモジュールdocstringを置き換え:
 
@@ -455,12 +455,12 @@ def main() -> None:
     hook_io.finalize({"terminalSequence": "\u0007"}, cfg_all)
 ```
 
-- [ ] **Step 4: テストが通ることを確認**
+- [x] **Step 4: テストが通ることを確認**
 
 Run: `uv run pytest tests/test_audit_and_notify.py -v`
 Expected: 全件 PASS
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add hooks/notification/notify.py tests/test_audit_and_notify.py
@@ -484,23 +484,23 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: Task 4 完了(同等機能がHook本体に存在すること)
 - Produces: なし(削除のみ)
 
-- [ ] **Step 1: 削除**
+- [x] **Step 1: 削除**
 
 ```bash
 git rm examples/notify_wrapper.sh tests/test_notify_wrapper.py
 ```
 
-- [ ] **Step 2: 全テストが通ることを確認**
+- [x] **Step 2: 全テストが通ることを確認**
 
 Run: `uv run pytest -q`
 Expected: 全件 PASS(wrapper系4件が消え、notify系の新テストが加わった状態)
 
-- [ ] **Step 3: 参照残りが無いことを確認**
+- [x] **Step 3: 参照残りが無いことを確認**
 
 Run: `grep -rn "notify_wrapper" --include="*.py" --include="*.json" --include="*.sh" hooks/ tests/ examples/ .claude* 2>/dev/null || echo "参照なし"`
 Expected: `参照なし`(ドキュメント内の参照は Task 6 で更新する)
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
 ```bash
 git commit -m "refactor: notify_wrapper.shと旧テストを削除(機能はnotify.py本体へ統合済み)
@@ -522,7 +522,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: Task 1〜5 の最終仕様
 - Produces: 新仕様と一致したドキュメント一式
 
-- [ ] **Step 1: docs/hooks/notify.md を以下の内容で全面置き換え**
+- [x] **Step 1: docs/hooks/notify.md を以下の内容で全面置き換え**
 
 ```markdown
 # notify
@@ -606,7 +606,7 @@ printf '{"cwd": "%s", "message": "notify動作確認"}' "$PWD" | uv run hooks/no
 - デスクトップ通知の成否は各コマンドの終了コードで判定するため、通知デーモン側で表示が抑制されるケース(集中モード等)は成功扱いになる。
 ```
 
-- [ ] **Step 2: docs/configuration.md のスキーマを更新**
+- [x] **Step 2: docs/configuration.md のスキーマを更新**
 
 `## 2. 全スキーマ` 内の notify ブロックを置き換え:
 
@@ -618,7 +618,7 @@ printf '{"cwd": "%s", "message": "notify動作確認"}' "$PWD" | uv run hooks/no
   }
 ```
 
-- [ ] **Step 3: README のHook一覧を更新**
+- [x] **Step 3: README のHook一覧を更新**
 
 `README.ja.md` の notify 行を置き換え:
 
@@ -632,7 +632,7 @@ printf '{"cwd": "%s", "message": "notify動作確認"}' "$PWD" | uv run hooks/no
 | [notify](docs/hooks/notify.md) | Notification | Notifies on permission-wait/idle (default: auto-detected desktop notification with bell fallback; bell-only or a custom command also available) |
 ```
 
-- [ ] **Step 4: wrapper参照とリークの最終確認**
+- [x] **Step 4: wrapper参照とリークの最終確認**
 
 Run: `grep -rn "notify_wrapper" README.md README.ja.md docs/ --include="*.md" | grep -v superpowers || echo "参照なし"`
 Expected: `参照なし`(specs/plans内の履歴的言及は残ってよい)
@@ -640,7 +640,7 @@ Expected: `参照なし`(specs/plans内の履歴的言及は残ってよい)
 Run: `grep -rnE '/(home|Users)/[A-Za-z_][A-Za-z0-9._-]*' docs/hooks/notify.md docs/configuration.md README.md README.ja.md | grep -vE '/(home|Users)/(USER|alice|user)\b' || echo "リークなし"`
 Expected: `リークなし`
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add docs/hooks/notify.md docs/configuration.md README.md README.ja.md
@@ -661,7 +661,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: Task 1〜6 の変更内容
 - Produces: 0.3.0 リリース情報
 
-- [ ] **Step 1: CHANGELOG.md の `## [0.2.0]` の直前に追加**
+- [x] **Step 1: CHANGELOG.md の `## [0.2.0]` の直前に追加**
 
 ```markdown
 ## [0.3.0] - 2026-07-16
@@ -675,18 +675,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - **破壊的変更** `examples/notify_wrapper.sh`: 同等機能がHook本体へ統合されたため削除。`notify.command` に本スクリプトを絶対パスで指定していた場合、リポジトリ/プラグイン更新でスクリプトが消えるため、設定から `notify.command` を削除して既定の `auto` へ移行すること(同等以上の動作をする)。
 ```
 
-- [ ] **Step 2: .claude-plugin/plugin.json の version を更新**
+- [x] **Step 2: .claude-plugin/plugin.json の version を更新**
 
 ```json
 "version": "0.3.0",
 ```
 
-- [ ] **Step 3: パッケージングテストが通ることを確認**
+- [x] **Step 3: パッケージングテストが通ることを確認**
 
 Run: `uv run pytest tests/test_packaging.py -v`
 Expected: 全件 PASS
 
-- [ ] **Step 4: コミット**
+- [x] **Step 4: コミット**
 
 ```bash
 git add CHANGELOG.md .claude-plugin/plugin.json
@@ -706,25 +706,25 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Consumes: Task 1〜7 の全成果物
 - Produces: 検証済みのブランチ(マージ判断へ)
 
-- [ ] **Step 1: 全テストとlint**
+- [x] **Step 1: 全テストとlint**
 
 Run: `uv run pytest -q && uv run ruff check .`
 Expected: 全件 PASS / `All checks passed!`
 
-- [ ] **Step 2: リポジトリ全体のリークチェック**
+- [x] **Step 2: リポジトリ全体のリークチェック**
 
 Run: `grep -rnE '/(home|Users)/[A-Za-z_][A-Za-z0-9._-]*' --include="*.py" --include="*.md" --include="*.json" hooks/ tests/ docs/ examples/ README.md README.ja.md CHANGELOG.md | grep -vE '/(home|Users)/(USER|alice|user)\b' || echo "リークなし"`
 Expected: `リークなし`
 
-- [ ] **Step 3: 実機E2Eスモーク(このマシンはWSL)**
+- [x] **Step 3: 実機E2Eスモーク(このマシンはWSL)**
 
 Run: `printf '{"cwd": "%s", "message": "0.3.0 E2Eスモーク"}' "$PWD" | uv run hooks/notification/notify.py`
 Expected: 出力が空(= デスクトップ通知チェーン成功)で、Windowsトーストが実際に表示される。表示は人間の目視確認が必要なので、実行後にユーザーへ確認を求めること
 
-- [ ] **Step 4: グローバル設定の後始末(このマシン固有・リポジトリ外)**
+- [x] **Step 4: グローバル設定の後始末(このマシン固有・リポジトリ外)**
 
 `~/.claude/claude-hooks.json` に旧wrapperを指す `notify.command` が設定されている場合、`auto` で不要になるため削除する(`command` が残っていると削除済みwrapperのパスを実行しようとして通知が無音になる)。削除後にStep 3を再実行して確認する。
 
-- [ ] **Step 5: 完了報告**
+- [x] **Step 5: 完了報告**
 
 superpowers:finishing-a-development-branch スキルに従い、マージ・PR等の統合方法をユーザーに確認する。
