@@ -78,7 +78,8 @@
   },
   "notify": {
     "enabled": true,
-    "command": null                          // nullならターミナルベル。文字列なら {message} 置換で実行
+    "method": "auto",                        // "auto"=デスクトップ通知の自動判別(不可ならベル) / "bell"=常にベル
+    "command": null                          // 設定時はmethodより優先。{message} 置換で実行
   }
 }
 ```

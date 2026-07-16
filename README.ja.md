@@ -62,7 +62,7 @@ git clone https://github.com/wwwcojp/safe-dev-hooks.git
 | [quality_gate](docs/hooks/quality_gate.md) | PostToolUse / `Edit\|Write` | 編集ファイルへ lint/format を実行し、エラーは `decision:block` でClaudeに自己修正させる(warn/block設定可) |
 | [secrets_scan](docs/hooks/secrets_scan.md) | PostToolUse / `Edit\|Write` | 書き込み内容からAWSキー・GitHubトークン・秘密鍵ブロック等を検出し block |
 | [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | 全ツール実行とセッション境界を JSONL で非同期記録 |
-| [notify](docs/hooks/notify.md) | Notification | 許可待ち・アイドル時の通知(既定はターミナルベル、コマンド差し替え可) |
+| [notify](docs/hooks/notify.md) | Notification | 許可待ち・アイドル時の通知(既定はデスクトップ通知の自動判別、不可ならベル。bell固定・コマンド差し替えも可) |
 
 ## 4. 設定
 
