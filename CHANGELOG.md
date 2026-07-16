@@ -2,6 +2,16 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.3.0] - 2026-07-16
+
+### Changed
+
+- **破壊的変更** `notify`: デスクトップ通知(WSL→Windowsトースト / Linuxデスクトップ→notify-send / macOS→osascript)をHook本体へ統合し、既定動作をターミナルベルから自動判別(`notify.method: "auto"`)へ変更。デスクトップ通知が使えない環境では従来どおりベルへフォールバックする。ベルに固定したい場合は `notify.method: "bell"` を設定する。`notify.command` は従来どおり最優先で動作する(完全互換)。
+
+### Removed
+
+- **破壊的変更** `examples/notify_wrapper.sh`: 同等機能がHook本体へ統合されたため削除。`notify.command` に本スクリプトを絶対パスで指定していた場合、リポジトリ/プラグイン更新でスクリプトが消えるため、設定から `notify.command` を削除して既定の `auto` へ移行すること(同等以上の動作をする)。
+
 ## [0.2.0] - 2026-07-13
 
 ### Added

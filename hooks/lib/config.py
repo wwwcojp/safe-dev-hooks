@@ -27,13 +27,14 @@ DEFAULTS: dict = {
     "quality_gate": {"enabled": True, "mode": "block", "commands": {}},
     "secrets_scan": {"enabled": True, "custom_patterns": []},
     "audit_log": {"enabled": True, "path": ".claude/logs"},
-    "notify": {"enabled": True, "command": None},
+    "notify": {"enabled": True, "method": "auto", "command": None},
 }
 
 _ENUM_KEYS = {
     ("exfil_guard", "mode"): {"detect", "always"},
     ("exfil_output_scan", "action"): {"warn", "redact"},
     ("quality_gate", "mode"): {"block", "warn"},
+    ("notify", "method"): {"auto", "bell"},
 }
 _CATEGORY_ACTIONS = {"deny", "ask", "off"}
 

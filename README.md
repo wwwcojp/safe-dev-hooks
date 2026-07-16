@@ -64,7 +64,7 @@ Trade-off: you lose uv's automatic provisioning of a Python ≥ 3.10 interpreter
 | [quality_gate](docs/hooks/quality_gate.md) | PostToolUse / `Edit\|Write` | Runs lint/format on the edited file; failures use `decision:block` to make Claude self-correct (warn/block mode configurable) |
 | [secrets_scan](docs/hooks/secrets_scan.md) | PostToolUse / `Edit\|Write` | Detects AWS keys, GitHub tokens, private-key blocks, etc. in written content and blocks |
 | [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | Asynchronously records every tool call and session boundary as JSONL |
-| [notify](docs/hooks/notify.md) | Notification | Notifies on permission-wait/idle (default: terminal bell, command replaceable) |
+| [notify](docs/hooks/notify.md) | Notification | Notifies on permission-wait/idle (default: auto-detected desktop notification with bell fallback; bell-only or a custom command also available) |
 
 ## 4. Configuration
 

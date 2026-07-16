@@ -63,3 +63,15 @@ def test_enum_typo_falls_back_to_safe_default(monkeypatch, tmp_path):
     assert cfg["exfil_guard"]["mode"] == "detect"
     assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
     assert len(cfg["_errors"]) == 2
+
+
+def test_notify_method_default_and_typo_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["notify"]["method"] == "auto"
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "toast"}}), encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["notify"]["method"] == "auto"
+    assert len(cfg["_errors"]) == 1

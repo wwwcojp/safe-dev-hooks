@@ -66,8 +66,10 @@ def test_audit_survives_non_dict_section(monkeypatch, tmp_path, capsys):
     assert out is not None and "systemMessage" in out
 
 
-def test_notify_default_bell(monkeypatch, tmp_path, capsys):
+def test_notify_default_auto_falls_back_to_bell(monkeypatch, tmp_path, capsys):
+    """既定(auto)でデスクトップ通知が全滅した場合はベルへフォールバックする。"""
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(notify, "_notify_desktop", lambda msg: False)
     event = {
         "hook_event_name": "Notification",
         "cwd": str(tmp_path),
@@ -76,6 +78,64 @@ def test_notify_default_bell(monkeypatch, tmp_path, capsys):
     }
     out = _run(notify, monkeypatch, event, capsys)
     assert out["terminalSequence"] == "\u0007"
+
+
+def test_notify_auto_desktop_success_outputs_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    received = []
+    monkeypatch.setattr(notify, "_notify_desktop", lambda msg: received.append(msg) or True)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "許可待ち"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert out is None
+    assert received == ["許可待ち"]
+
+
+def test_notify_method_bell_skips_desktop(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
+    )
+
+    def _boom(msg):
+        raise AssertionError("method=bellではデスクトップチェーンを呼ばない")
+
+    monkeypatch.setattr(notify, "_notify_desktop", _boom)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "m"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert out["terminalSequence"] == "\u0007"
+
+
+def test_notify_command_skips_desktop(monkeypatch, tmp_path, capsys):
+    """notify.command設定時はmethodに関わらずコマンドが最優先(互換性)。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    marker = tmp_path / "notified.txt"
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"command": f"touch {marker}"}}), encoding="utf-8"
+    )
+
+    def _boom(msg):
+        raise AssertionError("command設定時はデスクトップチェーンを呼ばない")
+
+    monkeypatch.setattr(notify, "_notify_desktop", _boom)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "done"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert marker.exists()
+    assert out is None
+
+
+def test_notify_disabled_outputs_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"enabled": False}}), encoding="utf-8"
+    )
+
+    def _boom(msg):
+        raise AssertionError("enabled=falseでは何も実行しない")
+
+    monkeypatch.setattr(notify, "_notify_desktop", _boom)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "m"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert out is None
 
 
 def test_notify_custom_command(monkeypatch, tmp_path, capsys):
@@ -91,3 +151,90 @@ def test_notify_custom_command(monkeypatch, tmp_path, capsys):
     }
     _run(notify, monkeypatch, event, capsys)
     assert marker.exists()
+
+
+def test_is_wsl_by_env(monkeypatch):
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    assert notify._is_wsl() is True
+
+
+def test_is_wsl_by_proc_version(monkeypatch, tmp_path):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    fake = tmp_path / "version"
+    fake.write_text("Linux version 6.6.0-Microsoft-standard", encoding="utf-8")
+    monkeypatch.setattr(notify, "_PROC_VERSION", fake)
+    assert notify._is_wsl() is True
+
+
+def test_is_wsl_false_on_plain_linux(monkeypatch, tmp_path):
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    fake = tmp_path / "version"
+    fake.write_text("Linux version 6.6.0-generic", encoding="utf-8")
+    monkeypatch.setattr(notify, "_PROC_VERSION", fake)
+    assert notify._is_wsl() is False
+
+
+def test_windows_toast_passes_message_via_env(monkeypatch):
+    captured = {}
+
+    def fake_run(argv, env=None, capture_output=None, timeout=None):
+        captured["argv"] = argv
+        captured["env"] = env
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(notify.subprocess, "run", fake_run)
+    injected = 'x"; Remove-Item -Recurse $HOME; "'
+    assert notify._notify_windows_toast("Claude Code", injected) is True
+    assert captured["argv"][0] == "powershell.exe"
+    # メッセージは環境変数で渡り、コマンド文字列には埋め込まれない
+    assert captured["env"]["NOTIFY_MSG"] == injected
+    assert captured["env"]["NOTIFY_TITLE"] == "Claude Code"
+    assert captured["env"]["WSLENV"].endswith("NOTIFY_TITLE:NOTIFY_MSG")
+    assert "Remove-Item" not in " ".join(captured["argv"])
+
+
+def test_desktop_chain_order_and_fallthrough(monkeypatch):
+    calls = []
+    monkeypatch.setattr(notify, "_is_wsl", lambda: True)
+    monkeypatch.setattr(notify.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        notify, "_notify_windows_toast", lambda t, m: calls.append("toast") or False
+    )
+    monkeypatch.setattr(
+        notify, "_notify_notify_send", lambda t, m: calls.append("notify-send") or True
+    )
+    monkeypatch.setattr(
+        notify, "_notify_osascript", lambda t, m: calls.append("osascript") or True
+    )
+    assert notify._notify_desktop("m") is True
+    # toast失敗後にnotify-sendへ進み、成功したらosascriptは呼ばない
+    assert calls == ["toast", "notify-send"]
+
+
+def test_desktop_chain_wsl_without_powershell_falls_through(monkeypatch):
+    """WSL判定がTrueでもpowershell.exeが無ければトーストを飛ばしnotify-sendへ進む。"""
+    calls = []
+    monkeypatch.setattr(notify, "_is_wsl", lambda: True)
+    monkeypatch.setattr(
+        notify.shutil,
+        "which",
+        lambda name: None if name == "powershell.exe" else f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(
+        notify, "_notify_windows_toast", lambda t, m: calls.append("toast") or True
+    )
+    monkeypatch.setattr(
+        notify, "_notify_notify_send", lambda t, m: calls.append("notify-send") or True
+    )
+    assert notify._notify_desktop("m") is True
+    assert calls == ["notify-send"]
+
+
+def test_desktop_chain_all_unavailable(monkeypatch):
+    monkeypatch.setattr(notify, "_is_wsl", lambda: False)
+    monkeypatch.setattr(notify.shutil, "which", lambda name: None)
+    assert notify._notify_desktop("m") is False
