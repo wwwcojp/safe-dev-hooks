@@ -66,8 +66,10 @@ def test_audit_survives_non_dict_section(monkeypatch, tmp_path, capsys):
     assert out is not None and "systemMessage" in out
 
 
-def test_notify_default_bell(monkeypatch, tmp_path, capsys):
+def test_notify_default_auto_falls_back_to_bell(monkeypatch, tmp_path, capsys):
+    """既定(auto)でデスクトップ通知が全滅した場合はベルへフォールバックする。"""
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(notify, "_notify_desktop", lambda msg: False)
     event = {
         "hook_event_name": "Notification",
         "cwd": str(tmp_path),
@@ -76,6 +78,64 @@ def test_notify_default_bell(monkeypatch, tmp_path, capsys):
     }
     out = _run(notify, monkeypatch, event, capsys)
     assert out["terminalSequence"] == "\u0007"
+
+
+def test_notify_auto_desktop_success_outputs_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    received = []
+    monkeypatch.setattr(notify, "_notify_desktop", lambda msg: received.append(msg) or True)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "許可待ち"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert out is None
+    assert received == ["許可待ち"]
+
+
+def test_notify_method_bell_skips_desktop(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
+    )
+
+    def _boom(msg):
+        raise AssertionError("method=bellではデスクトップチェーンを呼ばない")
+
+    monkeypatch.setattr(notify, "_notify_desktop", _boom)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "m"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert out["terminalSequence"] == "\u0007"
+
+
+def test_notify_command_skips_desktop(monkeypatch, tmp_path, capsys):
+    """notify.command設定時はmethodに関わらずコマンドが最優先(互換性)。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    marker = tmp_path / "notified.txt"
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"command": f"touch {marker}"}}), encoding="utf-8"
+    )
+
+    def _boom(msg):
+        raise AssertionError("command設定時はデスクトップチェーンを呼ばない")
+
+    monkeypatch.setattr(notify, "_notify_desktop", _boom)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "done"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert marker.exists()
+    assert out is None
+
+
+def test_notify_disabled_outputs_nothing(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"enabled": False}}), encoding="utf-8"
+    )
+
+    def _boom(msg):
+        raise AssertionError("enabled=falseでは何も実行しない")
+
+    monkeypatch.setattr(notify, "_notify_desktop", _boom)
+    event = {"hook_event_name": "Notification", "cwd": str(tmp_path), "message": "m"}
+    out = _run(notify, monkeypatch, event, capsys)
+    assert out is None
 
 
 def test_notify_custom_command(monkeypatch, tmp_path, capsys):

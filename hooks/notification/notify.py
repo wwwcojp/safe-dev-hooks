@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""通知イベントをターミナルベルまたは任意コマンドでユーザーへ伝える。"""
+"""通知イベントをデスクトップ通知・ターミナルベル・任意コマンドでユーザーへ伝える。"""
 import os
 import shlex
 import shutil
@@ -104,9 +104,9 @@ def main() -> None:
     cfg = cfg_all.get("notify", {})
     if not cfg.get("enabled", True):
         hook_io.finalize(None, cfg_all)
+    message = event.get("message", "")
     command = cfg.get("command")
     if command:
-        message = event.get("message", "")
         try:
             subprocess.run(
                 shlex.split(command.replace("{message}", shlex.quote(message))),
@@ -114,6 +114,8 @@ def main() -> None:
             )
         except Exception:
             pass
+        hook_io.finalize(None, cfg_all)
+    if cfg.get("method", "auto") == "auto" and _notify_desktop(message):
         hook_io.finalize(None, cfg_all)
     hook_io.finalize({"terminalSequence": "\u0007"}, cfg_all)
 
