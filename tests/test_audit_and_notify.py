@@ -112,3 +112,50 @@ def test_is_wsl_false_on_plain_linux(monkeypatch, tmp_path):
     fake.write_text("Linux version 6.6.0-generic", encoding="utf-8")
     monkeypatch.setattr(notify, "_PROC_VERSION", fake)
     assert notify._is_wsl() is False
+
+
+def test_windows_toast_passes_message_via_env(monkeypatch):
+    captured = {}
+
+    def fake_run(argv, env=None, capture_output=None, timeout=None):
+        captured["argv"] = argv
+        captured["env"] = env
+
+        class R:
+            returncode = 0
+
+        return R()
+
+    monkeypatch.setattr(notify.subprocess, "run", fake_run)
+    injected = 'x"; Remove-Item -Recurse $HOME; "'
+    assert notify._notify_windows_toast("Claude Code", injected) is True
+    assert captured["argv"][0] == "powershell.exe"
+    # メッセージは環境変数で渡り、コマンド文字列には埋め込まれない
+    assert captured["env"]["NOTIFY_MSG"] == injected
+    assert captured["env"]["NOTIFY_TITLE"] == "Claude Code"
+    assert captured["env"]["WSLENV"].endswith("NOTIFY_TITLE:NOTIFY_MSG")
+    assert "Remove-Item" not in " ".join(captured["argv"])
+
+
+def test_desktop_chain_order_and_fallthrough(monkeypatch):
+    calls = []
+    monkeypatch.setattr(notify, "_is_wsl", lambda: True)
+    monkeypatch.setattr(notify.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        notify, "_notify_windows_toast", lambda t, m: calls.append("toast") or False
+    )
+    monkeypatch.setattr(
+        notify, "_notify_notify_send", lambda t, m: calls.append("notify-send") or True
+    )
+    monkeypatch.setattr(
+        notify, "_notify_osascript", lambda t, m: calls.append("osascript") or True
+    )
+    assert notify._notify_desktop("m") is True
+    # toast失敗後にnotify-sendへ進み、成功したらosascriptは呼ばない
+    assert calls == ["toast", "notify-send"]
+
+
+def test_desktop_chain_all_unavailable(monkeypatch):
+    monkeypatch.setattr(notify, "_is_wsl", lambda: False)
+    monkeypatch.setattr(notify.shutil, "which", lambda name: None)
+    assert notify._notify_desktop("m") is False
