@@ -26,6 +26,32 @@ def test_hooks_json_references_existing_scripts():
                 assert (REPO / m.group(1)).is_file(), m.group(1)
 
 
+def test_hook_scripts_declare_inline_metadata():
+    """hooks.jsonが参照する全スクリプトにPEP 723インラインメタデータがあること。
+
+    uv runはインラインメタデータのあるスクリプトをcwdのプロジェクトから隔離した
+    環境で実行する。メタデータが無いとcwd(=利用者の任意プロジェクト)の依存解決に
+    巻き込まれ、利用者側の環境次第でHookが失敗する(フェイルオープン)。
+    requires-python もこのブロックの宣言だけがHook実行時に効く。
+    """
+    h = _load("hooks/hooks.json")
+    scripts = set()
+    for entries in h["hooks"].values():
+        for entry in entries:
+            for hook in entry["hooks"]:
+                m = re.search(r"\$\{CLAUDE_PLUGIN_ROOT\}/(\S+?\.py)", hook["command"])
+                scripts.add(m.group(1))
+    assert scripts
+    block_re = re.compile(r"^# /// script$(.*?)^# ///$", re.M | re.S)
+    for rel in sorted(scripts):
+        text = (REPO / rel).read_text(encoding="utf-8")
+        m = block_re.search(text)
+        assert m, f"{rel}: PEP 723インラインメタデータ(# /// script)がありません"
+        assert re.search(r'^#\s*requires-python\s*=\s*">=3\.10"', m.group(1), re.M), (
+            f"{rel}: requires-python = \">=3.10\" の宣言がありません"
+        )
+
+
 def test_hooks_json_wires_all_events():
     h = _load("hooks/hooks.json")
     assert set(h["hooks"]) == {

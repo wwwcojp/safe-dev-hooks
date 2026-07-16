@@ -22,7 +22,8 @@ None of this defends against a malicious user — it exists to **prevent agent m
 
 ### Prerequisites
 
-- [`uv`](https://docs.astral.sh/uv/) is required (uv resolves the Python runtime itself, no separate install needed)
+- [`uv`](https://docs.astral.sh/uv/) is required (uv resolves the Python runtime itself, no separate install needed — but if the machine has no Python ≥ 3.10, uv downloads an interpreter on first run, which requires network access; see the warmup step in "5. Verifying it works")
+- **If uv is missing or fails to run, the hooks error out but Claude Code only warns and keeps going (fail-open). Every guard silently becomes a no-op, so always run the verification in "5. Verifying it works" after installing** (see the next section for running without uv)
 - `exfil_guard`'s semantic judgment (LLM-based DLP detection) only runs when the Claude Code CLI (`claude`) is on `PATH`. If it isn't found, semantic judgment is skipped automatically and the other regex-based categories keep working
 
 ### Install as a plugin
@@ -41,6 +42,16 @@ git clone https://github.com/wwwcojp/safe-dev-hooks.git
 ```
 
 Merge the contents of [`examples/settings.full.json`](examples/settings.full.json) (all hooks) or [`examples/settings.minimal.json`](examples/settings.minimal.json) (`bash_guard` + `secrets_guard` only) into `~/.claude/settings.json`. Replace `$HOME/safe-dev-hooks` in the paths with wherever you actually cloned the repo. Because the architecture is one-concern-per-module, you can adopt only the hooks you need.
+
+### Running without uv (manual install only)
+
+Every hook script depends on the Python standard library only, so the hooks also work without uv as long as Python ≥ 3.10 is on `PATH`. When installing manually, replace `uv run` with `python3` in the commands you merge into `~/.claude/settings.json`:
+
+```json
+{"type": "command", "command": "python3 \"$HOME/safe-dev-hooks/hooks/pre_tool_use/bash_guard.py\"", "timeout": 10}
+```
+
+Trade-off: you lose uv's automatic provisioning of a Python ≥ 3.10 interpreter, so every hook fails if the system `python3` is older than 3.10 (and as noted above, failures are fail-open — always verify after switching). This approach is not available for the plugin install, because `hooks/hooks.json` is wired to uv.
 
 ## 3. Hook list
 
