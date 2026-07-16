@@ -215,6 +215,25 @@ def test_desktop_chain_order_and_fallthrough(monkeypatch):
     assert calls == ["toast", "notify-send"]
 
 
+def test_desktop_chain_wsl_without_powershell_falls_through(monkeypatch):
+    """WSL判定がTrueでもpowershell.exeが無ければトーストを飛ばしnotify-sendへ進む。"""
+    calls = []
+    monkeypatch.setattr(notify, "_is_wsl", lambda: True)
+    monkeypatch.setattr(
+        notify.shutil,
+        "which",
+        lambda name: None if name == "powershell.exe" else f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(
+        notify, "_notify_windows_toast", lambda t, m: calls.append("toast") or True
+    )
+    monkeypatch.setattr(
+        notify, "_notify_notify_send", lambda t, m: calls.append("notify-send") or True
+    )
+    assert notify._notify_desktop("m") is True
+    assert calls == ["notify-send"]
+
+
 def test_desktop_chain_all_unavailable(monkeypatch):
     monkeypatch.setattr(notify, "_is_wsl", lambda: False)
     monkeypatch.setattr(notify.shutil, "which", lambda name: None)

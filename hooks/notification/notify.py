@@ -21,7 +21,7 @@ def _is_wsl() -> bool:
         return True
     try:
         return "microsoft" in _PROC_VERSION.read_text(encoding="utf-8").lower()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return False
 
 
@@ -68,7 +68,7 @@ def _notify_windows_toast(title: str, message: str) -> bool:
 
 
 def _notify_notify_send(title: str, message: str) -> bool:
-    return _run_backend(["notify-send", title, message])
+    return _run_backend(["notify-send", "--", title, message])
 
 
 def _notify_osascript(title: str, message: str) -> bool:
