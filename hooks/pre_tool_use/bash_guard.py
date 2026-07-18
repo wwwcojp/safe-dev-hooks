@@ -92,6 +92,7 @@ def _force_push_rules(cfg: dict) -> list[dict]:
 
 
 def evaluate(command: str, cfg: dict) -> dict | None:
+    enabled = cfg.get("enabled", True)
     deny_rules = (
         list(patterns.load_rules("bash_deny.json"))
         + _force_push_rules(cfg)
@@ -111,6 +112,8 @@ def evaluate(command: str, cfg: dict) -> dict | None:
                 "decision": "deny",
                 "reason": f"破壊的コマンドを検出: {rule['name']}(deny層は設定で解除できません)",
             }
+    if not enabled:
+        return None
     for rule in ask_rules:
         for t in targets:
             if re.search(rule["regex"], t) and not any(re.search(a, t) for a in allow):
@@ -134,8 +137,6 @@ def main() -> None:
         sys.exit(0)
     cfg_all = config.load_config(event.get("cwd"))
     cfg = cfg_all.get("bash_guard", {})
-    if not cfg.get("enabled", True):
-        hook_io.finalize(None, cfg_all)
     command = (event.get("tool_input") or {}).get("command", "")
     try:
         verdict = evaluate(command, cfg)
