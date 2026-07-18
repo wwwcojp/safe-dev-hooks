@@ -7,8 +7,14 @@ GLOBAL_CONFIG_PATH = Path.home() / ".claude" / "claude-hooks.json"
 PROJECT_CONFIG_NAME = ".claude-hooks.json"
 
 DEFAULTS: dict = {
-    "bash_guard": {"enabled": True, "extra_deny": [], "extra_ask": [], "allow": []},
-    "secrets_guard": {"enabled": True, "protected_paths": [], "allow_paths": []},
+    "bash_guard": {
+        "enabled": True, "extra_deny": [], "extra_ask": [], "allow": [],
+        "protected_branches": ["main", "master", "develop", "release", "production"],
+    },
+    "secrets_guard": {
+        "enabled": True, "protected_paths": [], "allow_paths": [],
+        "write_protected_paths": [],
+    },
     "exfil_guard": {
         "enabled": True,
         "mode": "detect",
@@ -87,5 +93,17 @@ def load_config(cwd: str | None = None) -> dict:
                 categories[cat_key] = default_categories[cat_key]
             else:
                 del categories[cat_key]
+    pb = cfg.get("bash_guard", {}).get("protected_branches")
+    if not isinstance(pb, list) or not all(isinstance(x, str) for x in pb):
+        msg = "bash_guard.protected_branches: 文字列リストでないため既定値を使用します"
+        errors.append(msg)
+        cfg["bash_guard"]["protected_branches"] = list(
+            DEFAULTS["bash_guard"]["protected_branches"]
+        )
+    wp = cfg.get("secrets_guard", {}).get("write_protected_paths")
+    if not isinstance(wp, list) or not all(isinstance(x, str) for x in wp):
+        msg = "secrets_guard.write_protected_paths: 文字列リストでないため既定値を使用します"
+        errors.append(msg)
+        cfg["secrets_guard"]["write_protected_paths"] = []
     cfg["_errors"] = errors
     return cfg

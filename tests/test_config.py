@@ -75,3 +75,33 @@ def test_notify_method_default_and_typo_fallback(monkeypatch, tmp_path):
     cfg = config.load_config(str(tmp_path))
     assert cfg["notify"]["method"] == "auto"
     assert len(cfg["_errors"]) == 1
+
+
+def test_protected_branches_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["protected_branches"] == [
+        "main", "master", "develop", "release", "production"
+    ]
+    assert cfg["secrets_guard"]["write_protected_paths"] == []
+
+
+def test_protected_branches_override(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"bash_guard": {"protected_branches": ["main", "trunk"]}}', encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["protected_branches"] == ["main", "trunk"]
+
+
+def test_protected_branches_invalid_type_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"bash_guard": {"protected_branches": "main"}}', encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["protected_branches"] == [
+        "main", "master", "develop", "release", "production"
+    ]
+    assert any("protected_branches" in e for e in cfg["_errors"])
