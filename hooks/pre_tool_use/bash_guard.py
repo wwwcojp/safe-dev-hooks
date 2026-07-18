@@ -21,6 +21,25 @@ def _normalize(text: str) -> str:
     return text.replace('"', "").replace("'", "")
 
 
+_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=([^\s'\"$`(){}]+)$")
+
+
+def _expand_simple_assignments(command: str) -> str:
+    """同一コマンド内の単純な定数代入(VAR=value)を後続の $VAR/${VAR} に展開する。"""
+    assignments: dict[str, str] = {}
+    for seg in _segments(command):
+        m = _ASSIGN_RE.match(seg)
+        if m:
+            assignments[m.group(1)] = m.group(2)
+    if not assignments:
+        return command
+    expanded = command
+    for name, value in assignments.items():
+        expanded = re.sub(r"\$\{" + re.escape(name) + r"\}", value, expanded)
+        expanded = re.sub(r"\$" + re.escape(name) + r"(?![A-Za-z0-9_])", value, expanded)
+    return expanded
+
+
 def _force_push_rules(cfg: dict) -> list[dict]:
     branches = cfg.get("protected_branches") or ["main", "master"]
     alt = "|".join(re.escape(b) for b in branches)
@@ -45,6 +64,9 @@ def evaluate(command: str, cfg: dict) -> dict | None:
     ]
     allow = cfg.get("allow", [])
     targets = [_normalize(s) for s in _segments(command)] + [_normalize(command)]
+    expanded = _expand_simple_assignments(command)
+    if expanded != command:
+        targets += [_normalize(s) for s in _segments(expanded)] + [_normalize(expanded)]
     for rule in deny_rules:
         if any(re.search(rule["regex"], t) for t in targets):
             return {

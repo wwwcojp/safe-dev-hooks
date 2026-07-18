@@ -170,3 +170,20 @@ def test_blackbox_subprocess_deny(tmp_path):
     assert r.returncode == 0
     out = json.loads(r.stdout)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_variable_indirection_expanded_to_deny():
+    for cmd in ["T=/; rm -rf $T", "D=~; rm -rf ${D}", "P=/etc; rm -rf $P"]:
+        v = bash_guard.evaluate(cmd, CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_dynamic_value_not_expanded_stays_ask():
+    # コマンド置換由来の値は展開できない → recursive+force の ask に留まる(黙って通さない)
+    v = bash_guard.evaluate("T=$(cat target); rm -rf $T", CFG)
+    assert v is not None and v["decision"] == "ask"
+
+
+def test_partial_var_name_not_replaced():
+    # $T が $TMPDIR を壊さない
+    assert bash_guard.evaluate("T=/; echo $TMPDIR", CFG) is None
