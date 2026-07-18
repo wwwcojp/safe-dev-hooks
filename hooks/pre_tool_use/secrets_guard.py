@@ -22,6 +22,22 @@ _MUTATION_RE = re.compile(
     r"(?:>|>>|\btee\b|\bsed\s+(?:-i\b|--in-place\b)|\brm\b|\bmv\b|\bcp\b"
     r"|\btruncate\b|\bdd\b|\binstall\b|\bln\b)"
 )
+_REDIR_RE = re.compile(r"(>>|>)")
+
+
+def _mutation_target_tokens(seg: str) -> list[str]:
+    """リダイレクト演算子をトークン境界として分離し、of=FILE 等の候補も展開する。"""
+    padded = _REDIR_RE.sub(r" \1 ", seg)
+    try:
+        toks = shlex.split(padded)
+    except ValueError:
+        toks = padded.split()
+    candidates: list[str] = []
+    for tok in toks:
+        candidates.append(tok)
+        if "=" in tok:  # of=FILE, --output=FILE など
+            candidates.append(tok.split("=", 1)[1])
+    return candidates
 
 
 def _looks_like_path(token: str) -> bool:
@@ -107,10 +123,7 @@ def evaluate(event: dict, cfg: dict) -> dict | None:
         for seg in _SEGMENT_RE.split(command):
             if not _MUTATION_RE.search(seg):
                 continue
-            try:
-                seg_tokens = shlex.split(seg)
-            except ValueError:
-                seg_tokens = seg.split()
+            seg_tokens = _mutation_target_tokens(seg)
             for tok in seg_tokens:
                 if not _looks_like_path(tok):
                     continue

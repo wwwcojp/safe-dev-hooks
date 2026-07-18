@@ -89,3 +89,11 @@ def test_write_protected_config_extends():
     cfg = dict(CFG, write_protected_paths=["deploy.lock"])
     v = secrets_guard.evaluate(_event("Write", file_path="deploy.lock"), cfg)
     assert v["decision"] == "deny"
+
+
+def test_write_protected_glued_redirect_and_dd_denied():
+    for cmd in ["echo x >.claude-hooks.json",
+                "echo x>>.claude-hooks.json",
+                "dd if=/dev/zero of=.claude-hooks.json"]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
