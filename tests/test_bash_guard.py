@@ -187,3 +187,11 @@ def test_dynamic_value_not_expanded_stays_ask():
 def test_partial_var_name_not_replaced():
     # $T が $TMPDIR を壊さない
     assert bash_guard.evaluate("T=/; echo $TMPDIR", CFG) is None
+
+
+def test_backslash_value_in_assignment_does_not_crash():
+    # 値にバックスラッシュ/group参照を含む代入でも例外を出さず、静かな無効化もしない
+    v = bash_guard.evaluate(r"T=\1; rm -rf $T", CFG)     # 展開後 rm -rf \1 → recursive の ask
+    assert v is not None and v["decision"] == "ask"
+    # \g<0> がリテラル置換され、例外を出さない
+    bash_guard.evaluate(r"D=\g<0>; echo $D", CFG)         # must not raise

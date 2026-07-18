@@ -35,8 +35,10 @@ def _expand_simple_assignments(command: str) -> str:
         return command
     expanded = command
     for name, value in assignments.items():
-        expanded = re.sub(r"\$\{" + re.escape(name) + r"\}", value, expanded)
-        expanded = re.sub(r"\$" + re.escape(name) + r"(?![A-Za-z0-9_])", value, expanded)
+        pattern = r"\$\{" + re.escape(name) + r"\}"
+        expanded = re.sub(pattern, lambda m, v=value: v, expanded)
+        pattern = r"\$" + re.escape(name) + r"(?![A-Za-z0-9_])"
+        expanded = re.sub(pattern, lambda m, v=value: v, expanded)
     return expanded
 
 
