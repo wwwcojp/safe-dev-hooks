@@ -3,6 +3,8 @@
 # requires-python = ">=3.10"
 # ///
 """Bashコマンドの破壊的操作を deny/ask の2段階でガードする。"""
+import fnmatch
+import os
 import re
 import sys
 from pathlib import Path
@@ -40,6 +42,40 @@ def _expand_simple_assignments(command: str) -> str:
         pattern = r"\$" + re.escape(name) + r"(?![A-Za-z0-9_])"
         expanded = re.sub(pattern, lambda m, v=value: v, expanded)
     return expanded
+
+
+_SEND_CMD_RE = re.compile(
+    r"\b(curl|wget)\b[^;|&]*?"
+    r"(-d\b|--data\b|--data-[a-z]+\b|-F\b|--form\b|-T\b|--upload-file\b"
+    r"|--post-data\b|--post-file\b|--body-data\b|--body-file\b)"
+)
+_ENV_REF_RE = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?")
+_CMD_SUBST_RE = re.compile(r"\$\(|`")
+
+
+def _has_sensitive_operand(segment: str) -> bool:
+    if _ENV_REF_RE.search(segment) or _CMD_SUBST_RE.search(segment):
+        return True
+    protected = patterns.load_rules("sensitive_paths.json")["protected"]
+    for tok in segment.split():
+        name = os.path.basename(tok.strip("\"'").rstrip("/"))
+        if any(fnmatch.fnmatch(name, pat) for pat in protected):
+            return True
+    return False
+
+
+def _exfil_ask(segment: str) -> dict | None:
+    if not _SEND_CMD_RE.search(segment):
+        return None
+    if _has_sensitive_operand(segment):
+        return {
+            "decision": "ask",
+            "reason": (
+                "外部送信コマンドに機微オペランド(環境変数/コマンド置換/機密ファイル)を検出。"
+                "送信内容を確認してください"
+            ),
+        }
+    return None
 
 
 def _force_push_rules(cfg: dict) -> list[dict]:
@@ -85,6 +121,10 @@ def evaluate(command: str, cfg: dict) -> dict | None:
                         "実行してよいか確認してください"
                     ),
                 }
+    for seg in _segments(command):
+        verdict = _exfil_ask(seg)
+        if verdict and not any(re.search(a, seg) for a in allow):
+            return verdict
     return None
 
 
