@@ -123,6 +123,26 @@ def test_sql_strings_without_client_context_pass():
     assert bash_guard.evaluate('echo "TRUNCATE TABLE users" > migration.sql', CFG) is None
 
 
+def test_force_push_refspec_plus_denied():
+    for cmd in ["git push origin +HEAD:main", "git push origin +main",
+                "git push origin +refs/heads/master"]:
+        v = bash_guard.evaluate(cmd, CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_force_push_protected_branch_list():
+    cfg = dict(CFG, protected_branches=["main", "master", "develop"])
+    assert bash_guard.evaluate("git push --force origin develop", cfg)["decision"] == "deny"
+    # 一覧外は deny にならない(--force は ask 層で拾う)
+    v = bash_guard.evaluate("git push --force origin feature/foo", cfg)
+    assert v["decision"] == "ask"
+
+
+def test_force_push_refspec_non_protected_branch_not_denied():
+    v = bash_guard.evaluate("git push origin +feature/foo", CFG)
+    assert v is None or v["decision"] != "deny"
+
+
 def test_blackbox_subprocess_deny(tmp_path):
     """stdin→stdout の黒箱テスト(スクリプトとして実行)。"""
     script = Path(__file__).resolve().parent.parent / "hooks" / "pre_tool_use" / "bash_guard.py"

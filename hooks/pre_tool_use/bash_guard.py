@@ -21,10 +21,25 @@ def _normalize(text: str) -> str:
     return text.replace('"', "").replace("'", "")
 
 
-def evaluate(command: str, cfg: dict) -> dict | None:
-    deny_rules = list(patterns.load_rules("bash_deny.json")) + [
-        {"name": f"extra_deny:{p}", "regex": p} for p in cfg.get("extra_deny", [])
+def _force_push_rules(cfg: dict) -> list[dict]:
+    branches = cfg.get("protected_branches") or ["main", "master"]
+    alt = "|".join(re.escape(b) for b in branches)
+    return [
+        {"name": "force-push-protected",
+         "regex": rf"\bgit\s+push\s+[^;|&]*(--force\b|-f\b)[^;|&]*\b({alt})\b"},
+        {"name": "force-push-protected-order",
+         "regex": rf"\bgit\s+push\s+[^;|&]*\b({alt})\b[^;|&]*(--force\b|-f\b)"},
+        {"name": "force-push-refspec",
+         "regex": rf"\bgit\s+push\b[^;|&]*\s\+\S*({alt})\b"},
     ]
+
+
+def evaluate(command: str, cfg: dict) -> dict | None:
+    deny_rules = (
+        list(patterns.load_rules("bash_deny.json"))
+        + _force_push_rules(cfg)
+        + [{"name": f"extra_deny:{p}", "regex": p} for p in cfg.get("extra_deny", [])]
+    )
     ask_rules = list(patterns.load_rules("bash_ask.json")) + [
         {"name": f"extra_ask:{p}", "regex": p} for p in cfg.get("extra_ask", [])
     ]
