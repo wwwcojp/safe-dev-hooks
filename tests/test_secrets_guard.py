@@ -62,3 +62,30 @@ def test_bash_path_like_tokens_still_denied():
     assert v1["decision"] == "deny"
     v2 = secrets_guard.evaluate(_event("Bash", command="cp .env.example .env"), CFG)
     assert v2["decision"] == "deny"
+
+
+def test_write_protected_edit_denied():
+    for path in [".claude-hooks.json", "/proj/.claude/settings.json",
+                 "/proj/.claude/settings.local.json"]:
+        v = secrets_guard.evaluate(_event("Write", file_path=path), CFG)
+        assert v is not None and v["decision"] == "deny", path
+        v2 = secrets_guard.evaluate(_event("Edit", file_path=path), CFG)
+        assert v2 is not None and v2["decision"] == "deny", path
+
+
+def test_write_protected_read_allowed():
+    assert secrets_guard.evaluate(_event("Read", file_path=".claude-hooks.json"), CFG) is None
+    assert secrets_guard.evaluate(_event("Bash", command="cat .claude-hooks.json"), CFG) is None
+
+
+def test_write_protected_bash_mutation_denied():
+    for cmd in ["echo x > .claude-hooks.json", "rm .claude-hooks.json",
+                "sed -i s/a/b/ settings.json"]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_write_protected_config_extends():
+    cfg = dict(CFG, write_protected_paths=["deploy.lock"])
+    v = secrets_guard.evaluate(_event("Write", file_path="deploy.lock"), cfg)
+    assert v["decision"] == "deny"

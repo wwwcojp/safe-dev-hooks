@@ -5,5 +5,9 @@
     ".netrc", ".npmrc", ".pypirc", "secrets.*"
   ],
   "protected_dirs": ["~/.ssh", "~/.aws", "~/.gnupg"],
-  "allow": [".env.example", ".env.sample", ".env.template", "*.pub"]
+  "allow": [".env.example", ".env.sample", ".env.template", "*.pub"],
+  "write_protected": [
+    ".claude-hooks.json", "claude-hooks.json",
+    "settings.json", "settings.local.json", "hooks.json"
+  ]
 }
