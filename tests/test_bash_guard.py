@@ -125,7 +125,8 @@ def test_sql_strings_without_client_context_pass():
 
 def test_force_push_refspec_plus_denied():
     for cmd in ["git push origin +HEAD:main", "git push origin +main",
-                "git push origin +refs/heads/master"]:
+                "git push origin +refs/heads/master",
+                "git push origin +HEAD:refs/heads/main"]:
         v = bash_guard.evaluate(cmd, CFG)
         assert v is not None and v["decision"] == "deny", cmd
 
@@ -141,6 +142,14 @@ def test_force_push_protected_branch_list():
 def test_force_push_refspec_non_protected_branch_not_denied():
     v = bash_guard.evaluate("git push origin +feature/foo", CFG)
     assert v is None or v["decision"] != "deny"
+
+
+def test_force_push_refspec_source_side_branch_not_denied():
+    # ローカル main を非保護リモートブランチ feature へ force-push するのは deny しない
+    v = bash_guard.evaluate("git push origin +main:feature", CFG)
+    assert v is None or v["decision"] != "deny"
+    v2 = bash_guard.evaluate("git push origin +feature/foo", CFG)
+    assert v2 is None or v2["decision"] != "deny"
 
 
 def test_blackbox_subprocess_deny(tmp_path):

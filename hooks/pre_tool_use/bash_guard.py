@@ -30,7 +30,7 @@ def _force_push_rules(cfg: dict) -> list[dict]:
         {"name": "force-push-protected-order",
          "regex": rf"\bgit\s+push\s+[^;|&]*\b({alt})\b[^;|&]*(--force\b|-f\b)"},
         {"name": "force-push-refspec",
-         "regex": rf"\bgit\s+push\b[^;|&]*\s\+\S*({alt})\b"},
+         "regex": rf"\bgit\s+push\b[^;|&]*\s\+(?:[^\s:]*:)?(?:[^\s:]*/)?({alt})(?![\w.@:/-])"},
     ]
 
 
