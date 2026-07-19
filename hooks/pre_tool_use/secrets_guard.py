@@ -23,20 +23,28 @@ _MUTATION_RE = re.compile(
     r"|\btruncate\b|\bdd\b|\binstall\b|\bln\b)"
 )
 _REDIR_RE = re.compile(r"(>>|>)")
+_KEYWORD_MUTATOR_RE = re.compile(
+    r"(?:\btee\b|\bsed\s+(?:-i\b|--in-place\b)|\brm\b|\bmv\b|\bcp\b"
+    r"|\btruncate\b|\bdd\b|\binstall\b|\bln\b)"
+)
 
 
 def _mutation_target_tokens(seg: str) -> list[str]:
-    """リダイレクト演算子をトークン境界として分離し、of=FILE 等の候補も展開する。"""
+    """このセグメントで実際に書き込み対象となり得るトークンだけを収集する。"""
     padded = _REDIR_RE.sub(r" \1 ", seg)
     try:
         toks = shlex.split(padded)
     except ValueError:
         toks = padded.split()
     candidates: list[str] = []
-    for tok in toks:
-        candidates.append(tok)
-        if "=" in tok:  # of=FILE, --output=FILE など
-            candidates.append(tok.split("=", 1)[1])
+    for i, t in enumerate(toks):  # (a) リダイレクト対象: >/>> の直後トークン
+        if t in (">", ">>") and i + 1 < len(toks):
+            candidates.append(toks[i + 1])
+    for t in toks:  # (b) key=value 形式(dd of=FILE, --output=FILE 等)の値
+        if "=" in t:
+            candidates.append(t.split("=", 1)[1])
+    if _KEYWORD_MUTATOR_RE.search(seg):  # (c) キーワード変異子は引数特定が難しく安全側で全トークン
+        candidates.extend(toks)
     return candidates
 
 

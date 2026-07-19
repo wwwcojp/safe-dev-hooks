@@ -85,9 +85,22 @@ def test_write_protected_read_allowed():
 
 def test_write_protected_bash_mutation_denied():
     for cmd in ["echo x > .claude-hooks.json", "rm .claude-hooks.json",
-                "sed -i s/a/b/ settings.json"]:
+                "sed -i s/a/b/ .claude/settings.json"]:
         v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
         assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_write_protected_does_not_block_unrelated_settings():
+    for path in ["/app/.vscode/settings.json", "/app/webhooks/hooks.json"]:
+        assert secrets_guard.evaluate(_event("Write", file_path=path), CFG) is None, path
+
+
+def test_write_protected_read_with_redirect_allowed():
+    # 保護ファイルの「読取」はリダイレクトを伴っても通す(2>/dev/null 等)
+    for cmd in ["cat .claude-hooks.json 2>/dev/null",
+                "cat .claude-hooks.json > /tmp/out.json",
+                "grep foo .claude-hooks.json 2>&1"]:
+        assert secrets_guard.evaluate(_event("Bash", command=cmd), CFG) is None, cmd
 
 
 def test_write_protected_config_extends():

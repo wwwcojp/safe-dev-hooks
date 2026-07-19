@@ -1,6 +1,6 @@
 [
-  {"name": "rm-root-or-home", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/|/\\*|/\\.{1,2}/?|~|~/|\\$HOME)(\\s|$)"},
-  {"name": "find-delete-root", "regex": "\\bfind\\s+(?:-\\S+\\s+){0,4}(/|~|\\$HOME)\\s[^;|&]*(?:-delete\\b|-exec\\s+rm\\b)"},
+  {"name": "rm-root-or-home", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/(?!\\w)|~(?![\\w/])|~/(?!\\w)|\\$HOME(?![\\w/])|\\$HOME/(?!\\w))"},
+  {"name": "find-delete-root", "regex": "\\bfind\\s+(?:-\\S+\\s+){0,4}(/+|~|\\$HOME)\\s[^;|&]*(?:-delete\\b|-exec\\s+rm\\b)"},
   {"name": "rm-system-dir", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(etc|usr|var|bin|boot|lib|opt|srv)(/|\\s|$)"},
   {"name": "rm-home-root", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(home|Users)(/[\\w.-]+/?)?(\\s|$)"},
   {"name": "sudo-rm", "regex": "\\bsudo\\s+rm\\b"},

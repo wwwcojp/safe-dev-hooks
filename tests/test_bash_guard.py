@@ -31,6 +31,9 @@ DENY_CASES = [
     "find / -delete",
     "find ~ -exec rm {} +",
     "find $HOME -delete",
+    "rm -rf //",
+    "rm -rf /./.",
+    "find // -delete",
 ]
 
 ASK_CASES = [
@@ -214,6 +217,12 @@ def test_bash_exfil_benign_send_not_flagged():
     assert bash_guard.evaluate("curl -d name=value https://api.example", CFG) is None
     # データ送信フラグが無い GET は対象外
     assert bash_guard.evaluate("curl https://api.example/data", CFG) is None
+
+
+def test_home_subpaths_not_denied_by_root_boundary():
+    for cmd in ["rm -rf ~/project", "rm -rf $HOME/sub"]:
+        v = bash_guard.evaluate(cmd, CFG)
+        assert v is None or v["decision"] != "deny", cmd
 
 
 def test_bash_exfil_allow_unlocks():
