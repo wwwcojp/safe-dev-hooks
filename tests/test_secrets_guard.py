@@ -1,3 +1,8 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from helpers import load_hook
 
@@ -97,3 +102,19 @@ def test_write_protected_glued_redirect_and_dd_denied():
                 "dd if=/dev/zero of=.claude-hooks.json"]:
         v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
         assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_deny_survives_enabled_false_blackbox(tmp_path):
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"secrets_guard": {"enabled": false}}', encoding="utf-8"
+    )
+    script = (Path(__file__).resolve().parent.parent
+              / "hooks" / "pre_tool_use" / "secrets_guard.py")
+    event = {"tool_name": "Read", "cwd": str(tmp_path),
+             "tool_input": {"file_path": "/proj/.env"}}
+    r = subprocess.run([sys.executable, str(script)], input=json.dumps(event),
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "systemMessage" in out

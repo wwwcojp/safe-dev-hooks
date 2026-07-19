@@ -140,8 +140,6 @@ def main() -> None:
         sys.exit(0)
     cfg_all = config.load_config(event.get("cwd"))
     cfg = cfg_all.get("secrets_guard", {})
-    if not cfg.get("enabled", True):
-        hook_io.finalize(None, cfg_all)
     try:
         verdict = evaluate(event, cfg)
     except Exception as exc:  # fail-close(ask)
@@ -154,6 +152,13 @@ def main() -> None:
         )
         return
     out = hook_io.pre_tool_decision(verdict["decision"], verdict["reason"]) if verdict else None
+    if not cfg.get("enabled", True):
+        out = dict(out or {})
+        out.setdefault(
+            "systemMessage",
+            "[safe-dev-hooks] secrets_guard は enabled:false でも "
+            "deny 層を無効化できません(検査を継続しました)",
+        )
     hook_io.finalize(out, cfg_all)
 
 
