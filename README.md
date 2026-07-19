@@ -1,81 +1,92 @@
-# safe-dev-hooks — Hooks for developing safely with Claude Code
+# safe-dev-hooks — develop safely with Claude Code
 
 [日本語版: README.ja.md](README.ja.md)
 
-A public collection of 8 Claude Code Hooks that guard against agent mistakes and runaway behavior, designed with community best practices in mind ([sources here](docs/best-practices.md)).
+A collection of 8 [Claude Code Hooks](https://docs.claude.com/en/docs/claude-code/hooks) that catch an AI agent's mistakes and runaway actions before they happen — destructive commands, secret leaks, and unreviewed edits — with safe defaults that work out of the box and no configuration required. Designed around community [best practices](docs/best-practices.md).
 
-> Note: `docs/` is authoritative in Japanese; English translations of the per-hook reference, configuration guide, security model, and best-practices document are a future work item (see the design spec, section 6). This README is the primary bilingual entry point.
+## What it protects against
 
-## 1. Overview — what this prevents
+While you develop with Claude Code, these hooks guard against five kinds of accident:
 
-This Hooks collection targets five categories of risk that can occur while developing with Claude Code:
+1. **Destructive commands** — `rm -rf /`, `sudo rm`, force-pushing a protected branch, `mkfs`, `dd`, fork bombs, `DROP TABLE`, and the like.
+2. **Secret leaks** — reading, editing, or exfiltrating `.env` files, private keys, and cloud credentials.
+3. **Quality slipping** — edits landing without a lint/format check.
+4. **No paper trail** — no record of what ran or when a permission prompt appeared.
+5. **Leaks through MCP/Web tools** — credentials, PII, or confidential business data flowing out through tool arguments or coming back in tool responses.
 
-1. **Destructive command execution** — `rm -rf /`, `sudo rm`, force-pushing to protected branches, `mkfs`, `dd`, fork bombs, `DROP TABLE`, etc.
-2. **Leakage of sensitive information** — reading/editing/accessing secret files such as `.env` or private keys, or writing/exfiltrating secrets
-3. **Quality degradation** — edits slipping in without lint/format checks
-4. **Lack of visibility** — no record of what ran, or when a permission prompt occurred
-5. **Leakage via MCP tool input/output** — credentials, PII, or confidential business information sent or received through MCP/Web tools
+This is **not a defense against a malicious user** — anyone who can edit Claude Code's settings can turn the hooks off. It exists to stop the agent itself from making expensive mistakes. See [Guarantees](#guarantees--and-limits) for exactly what that does and doesn't cover.
 
-None of this defends against a malicious user — it exists to **prevent agent mistakes and runaway behavior** (see [Guarantees](#6-guarantees) below and [docs/security-model.md](docs/security-model.md), which is written in Japanese).
+## Install
 
-## 2. Quickstart
-
-### Prerequisites
-
-- [`uv`](https://docs.astral.sh/uv/) is required (uv resolves the Python runtime itself, no separate install needed — but if the machine has no Python ≥ 3.10, uv downloads an interpreter on first run, which requires network access; see the warmup step in "5. Verifying it works")
-- **If uv is missing or fails to run, the hooks error out but Claude Code only warns and keeps going (fail-open). Every guard silently becomes a no-op, so always run the verification in "5. Verifying it works" after installing** (see the next section for running without uv)
-- `exfil_guard`'s semantic judgment (LLM-based DLP detection) only runs when the Claude Code CLI (`claude`) is on `PATH`. If it isn't found, semantic judgment is skipped automatically and the other regex-based categories keep working
-
-### Install as a plugin
+### 1. Add the plugin
 
 ```
 /plugin marketplace add wwwcojp/safe-dev-hooks
 /plugin install safe-dev-hooks
 ```
 
-This enables all 8 hooks exactly as wired in `hooks/hooks.json`.
+That enables all 8 hooks as wired in `hooks/hooks.json`. The only requirement is [`uv`](https://docs.astral.sh/uv/) on your `PATH` — it provisions the Python runtime itself, so you don't need a separate Python install. To run only a subset of the hooks, use [manual install](#manual-install--partial-adoption) instead.
 
-### Manual install (copy-paste partial adoption is fine too)
+### 2. Verify — required, once, right after installing
+
+> [!IMPORTANT]
+> **The hooks fail *open*.** If `uv` is missing or errors out, each hook exits non-zero, Claude Code only warns, and **every guard silently becomes a no-op**. You will not notice this during normal use — so run the check below once after installing (it also warms up `uv`'s first-run interpreter download, which can exceed a hook's 10-second timeout and fail open the same way).
+
+Pipe a mock event straight into `bash_guard` and confirm it denies a destructive command:
+
+```bash
+echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | uv run hooks/pre_tool_use/bash_guard.py
+```
+
+It works if you get one line of JSON containing `"permissionDecision": "deny"`:
+
+```json
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "破壊的コマンドを検出: rm-root-or-home(deny層は設定で解除できません)"}}
+```
+
+(Reason messages are in Japanese, matching the hooks' own output.)
+
+### Manual install & partial adoption
+
+Prefer to pick only some hooks, or not use the plugin system? Clone the repo and merge a settings snippet into `~/.claude/settings.json`:
 
 ```bash
 git clone https://github.com/wwwcojp/safe-dev-hooks.git
 ```
 
-Merge the contents of [`examples/settings.full.json`](examples/settings.full.json) (all hooks) or [`examples/settings.minimal.json`](examples/settings.minimal.json) (`bash_guard` + `secrets_guard` only) into `~/.claude/settings.json`. Replace `$HOME/safe-dev-hooks` in the paths with wherever you actually cloned the repo. Because the architecture is one-concern-per-module, you can adopt only the hooks you need.
+- **All hooks:** merge [`examples/settings.full.json`](examples/settings.full.json).
+- **Minimal (`bash_guard` + `secrets_guard` only):** merge [`examples/settings.minimal.json`](examples/settings.minimal.json).
 
-### Running without uv (manual install only)
+In the snippet you merge, replace `$HOME/safe-dev-hooks` with your clone path. Each hook is one self-contained module, so adopting a subset is fine.
 
-Every hook script depends on the Python standard library only, so the hooks also work without uv as long as Python ≥ 3.10 is on `PATH`. When installing manually, replace `uv run` with `python3` in the commands you merge into `~/.claude/settings.json`:
+**Without `uv`:** the hook scripts use only the Python standard library, so they also run under any Python ≥ 3.10. Replace `uv run` with `python3` in the commands you merge — but then every hook fails (fail-open) if the system `python3` is older than 3.10, so re-run the verify step above. This route is manual-install only; the plugin is wired to `uv`.
 
-```json
-{"type": "command", "command": "python3 \"$HOME/safe-dev-hooks/hooks/pre_tool_use/bash_guard.py\"", "timeout": 10}
-```
+> `exfil_guard`'s optional semantic (LLM-based) DLP check runs only when the `claude` CLI is on `PATH`. If it isn't, that one check is skipped and the regex-based checks keep working.
 
-Trade-off: you lose uv's automatic provisioning of a Python ≥ 3.10 interpreter, so every hook fails if the system `python3` is older than 3.10 (and as noted above, failures are fail-open — always verify after switching). This approach is not available for the plugin install, because `hooks/hooks.json` is wired to uv.
+## The hooks
 
-## 3. Hook list
+| Hook | Event / matcher | What it does |
+|------|-----------------|--------------|
+| [bash_guard](docs/hooks/bash_guard.md) | PreToolUse / `Bash` | **Denies** irrecoverable operations (`rm -rf /`, `sudo rm`, force-push to a protected branch — including `+refspec` forms, `mkfs`, `dd`, fork bombs, `DROP TABLE`, `find … -delete` at `/` or `~`). **Asks** on gray-area ones (`git reset --hard`, recursive/forced `rm`, `curl\|bash`, or sending a secret via `curl`/`wget`). Protected branches are configurable; chained commands (`&&` `;` `\|\|`) are split and each segment inspected. |
+| [secrets_guard](docs/hooks/secrets_guard.md) | PreToolUse / `Read\|Edit\|Write\|Bash` | Denies reading/editing/`cat`-ing secret files (`.env` — `.env.example` is allowed — `*.pem`, `id_rsa`, `~/.ssh/`, `~/.aws/credentials`). Also **write-protects the hooks' own config and scripts** (`.claude-hooks.json`, `.claude/settings.json`, the installed `hooks/` and `rules/`) so the agent can't defang its own guards — reads still allowed. |
+| [exfil_guard](docs/hooks/exfil_guard.md) | PreToolUse / `mcp__.*\|WebFetch\|WebSearch` | DLP inspection of outbound arguments (credentials, PII, confidentiality markers, custom patterns, optional semantic check). |
+| [exfil_output_scan](docs/hooks/exfil_output_scan.md) | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | Detects secrets/PII in tool responses; configurable to warn or mask them. |
+| [quality_gate](docs/hooks/quality_gate.md) | PostToolUse / `Edit\|Write` | Runs lint/format on the edited file and, on failure, blocks so Claude self-corrects (warn/block configurable). |
+| [secrets_scan](docs/hooks/secrets_scan.md) | PostToolUse / `Edit\|Write` | Detects AWS keys, GitHub tokens, private-key blocks, etc. in written content and blocks. |
+| [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | Records every tool call and session boundary as JSONL, asynchronously. |
+| [notify](docs/hooks/notify.md) | Notification | Notifies on permission-wait/idle. Default is an auto-detected desktop notification (bell fallback); bell-only or a custom command also available. |
 
-| Hook | Event / matcher | Behavior |
-|------|--------------------|------|
-| [bash_guard](docs/hooks/bash_guard.md) | PreToolUse / `Bash` | Irrecoverable operations (`rm -rf /`, `sudo rm`, force-push to a protected branch, `mkfs`, `dd`, fork bombs, `DROP TABLE`, etc.) are denied. Gray-area operations (`git reset --hard`, `git clean -f`, recursive/forced `rm`, `curl\|bash`, etc.) trigger ask. Commands chained with `&&` `;` `\|\|` are split and each segment is inspected |
-| [secrets_guard](docs/hooks/secrets_guard.md) | PreToolUse / `Read\|Edit\|Write\|Bash` | Denies reading/editing/catting `.env` (`.env.example` etc. are allowed), `*.pem` / `id_rsa`, `~/.ssh/`, `~/.aws/credentials`, and similar |
-| [exfil_guard](docs/hooks/exfil_guard.md) | PreToolUse / `mcp__.*\|WebFetch\|WebSearch` | DLP inspection of outbound arguments (credentials, PII, confidentiality markers, custom patterns, semantic judgment) |
-| [exfil_output_scan](docs/hooks/exfil_output_scan.md) | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | Detects secrets/PII in responses. Configurable to warn (`additionalContext`) or mask (`updatedToolOutput`) |
-| [quality_gate](docs/hooks/quality_gate.md) | PostToolUse / `Edit\|Write` | Runs lint/format on the edited file; failures use `decision:block` to make Claude self-correct (warn/block mode configurable) |
-| [secrets_scan](docs/hooks/secrets_scan.md) | PostToolUse / `Edit\|Write` | Detects AWS keys, GitHub tokens, private-key blocks, etc. in written content and blocks |
-| [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | Asynchronously records every tool call and session boundary as JSONL |
-| [notify](docs/hooks/notify.md) | Notification | Notifies on permission-wait/idle (default: auto-detected desktop notification with bell fallback; bell-only or a custom command also available) |
+## Customize
 
-## 4. Configuration
+Every setting is **optional** — all guards run with safe defaults even with no config file at all. Configuration is for *tuning*, not for turning guards on. The deny tier can never be relaxed from a config file.
 
-All keys are optional. Every guard runs with safe defaults even with no configuration file at all. The project's `.claude-hooks.json` takes highest priority, then `~/.claude/claude-hooks.json` (personal defaults), then the bundled `rules/*.json` (built-in defaults) — all three layers are merged.
-
-Minimal example:
+Put project-shared settings in `.claude-hooks.json` at your repo root; personal defaults go in `~/.claude/claude-hooks.json`. (These are the hooks' own config files — separate from Claude Code's `settings.json`, which only wires the hooks up and doesn't tune them.) A minimal example:
 
 ```json
 {
   "bash_guard": {
-    "extra_deny": ["docker system prune"]
+    "extra_deny": ["docker system prune"],
+    "protected_branches": ["main", "release"]
   },
   "exfil_guard": {
     "trusted_servers": ["mcp__internal-kb"]
@@ -83,38 +94,16 @@ Minimal example:
 }
 ```
 
-See [docs/configuration.md](docs/configuration.md) (Japanese) for the full schema, the 3-layer merge details, and personal/team/high-security configuration presets.
+For the full schema, the 3-layer merge, and personal/team/high-security presets, see [docs/configuration.md](docs/configuration.md) (Japanese).
 
-## 5. Verifying it works (required first-run warmup)
+## Guarantees — and limits
 
-Each hook script is a `uv run --script` shebang, so its very first invocation on a machine may need to fetch/install a Python interpreter, which can take longer than the hooks' own 10-second timeout. Run the command below once, right after installation, so `uv` finishes that setup outside of an actual hook invocation — treat it as a mandatory warmup step, not just an optional sanity check.
+**Guaranteed.** Deny-tier matches (`bash_guard` / `secrets_guard`) are deterministic regardless of Claude Code's permission mode, and **cannot be lifted from a config file** — not even with `enabled: false`, which only disables the softer ask tier. The only way to remove the deny tier is to remove the hook itself.
 
-You can confirm `bash_guard` denies a destructive command by piping a mock event straight into the hook script:
+**Not guaranteed.** Hooks can be bypassed wholesale via Claude Code's `disableAllHooks` or by removing them — this is agent-accident prevention, not a malicious-user defense. Regex rules can't cover every unknown or obfuscated attack, and the optional semantic check is probabilistic (`ask` only). The [security model](docs/security-model.md) (Japanese) lays out the full picture, including specific known gaps.
 
-```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | uv run hooks/pre_tool_use/bash_guard.py
-```
-
-This is working correctly if it returns a single line of JSON containing `permissionDecision: "deny"`:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": "破壊的コマンドを検出: rm-root-or-home(deny層は設定で解除できません)"
-  }
-}
-```
-
-(The `permissionDecisionReason` text is in Japanese, matching the hook's own messages.)
-
-## 6. Guarantees
-
-Hooks can be disabled via Claude Code's `disableAllHooks` setting or by removing the hook configuration itself, so this project is **not a defense against a malicious user — it's a mechanism to prevent agent mistakes and runaway behavior**. The deny-tier patterns block deterministically regardless of permission mode and cannot be lifted from the configuration file, but there are known limits to regex coverage and to the probabilistic nature of semantic judgment. See [docs/security-model.md](docs/security-model.md) (Japanese) for the full picture of what is and isn't guaranteed.
-
-## 7. License / Contributing
+## License / Contributing
 
 - License: [LICENSE](LICENSE) (MIT)
-- How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
