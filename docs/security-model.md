@@ -20,6 +20,7 @@
 
 - **deny層パターンの決定論的ブロック**: `bash_guard`/`secrets_guard` の deny 判定は正規表現による決定論的な照合であり、Claude Codeの permission mode(`acceptEdits`/`bypassPermissions` 等)に関わらず、Hookが有効である限り常に同じ結果でブロックされる。
 - **設定ファイルからのdeny層解除不可**: `.claude-hooks.json` の `bash_guard.allow` は ask 層の判定のみを解除できる。deny層(`rules/bash_deny.json` の各ルールおよび `secrets_guard` の保護パス)を設定ファイルから解除する手段は用意されていない。deny判定を止める唯一の方法はHook自体の無効化である。
+- **`enabled: false` でもdeny層は解除できない**: `bash_guard.enabled: false` は ask 層(`rules/bash_ask.json`・`extra_ask`・curl/wget の外部送信ask検査)のみを無効化し、deny層の判定は継続する。`secrets_guard.enabled: false` に至ってはdeny層の無効化に一切効果がなく(no-op)、`systemMessage` で「enabled:false でもdeny層を無効化できません」と通知したうえで通常どおり検査を継続する。deny層を止める正規の手段は `hooks/hooks.json` からのHook除去、または Claude Code 本体の `disableAllHooks` のみである。
 - **fail-closeによる安全側判定**: `bash_guard`/`secrets_guard` の判定処理中に例外が発生した場合、ツール実行を止めずに `ask` を返す(黙って通さない)。
 
 ## 3. 保証しないこと
@@ -40,6 +41,10 @@
 3. **bash_guard: `rm` のフラグトークンが9個以上あると検知漏れとなる** — `rm-recursive-or-force`(ask)・`rm-root-or-home`(deny)の正規表現はReDoS対策として `(?:-\S+\s+){0,8}` でオプショントークンを最大8個までしか許容していない。フラグを9個以上並べて `-r`/`-f` を隠すコマンドは、この上限を超えるため検出を回避できる。詳細: [docs/hooks/bash_guard.md](hooks/bash_guard.md)。
 4. **bash_guard: クォート除去により文字列リテラルも過剰検知される** — 判定前にコマンド文字列からクォート文字(`"`/`'`)を除去してから照合するため、`echo 'rm -rf /'` のような、実行内容としては無害な文字列リテラルを含むコマンドも `rm-root-or-home` に一致し `deny` になり得る。検知漏れよりも誤検知を許容する設計判断である。詳細: [docs/hooks/bash_guard.md](hooks/bash_guard.md)。
 5. **exfil_guard: semantic判定は確率的でありask専用・fail-open** — ヘッドレスClaude呼び出しによる判定であるため検出漏れ・誤判定があり得る。`deny` には使わず `ask` にのみ変換する。`claude` CLIが `PATH` 上に無い環境では自動的にスキップされ、正規表現ベースの他カテゴリのみで動作を継続する(判定不能を理由にツール実行を止めることはない)。詳細: [docs/hooks/exfil_guard.md](hooks/exfil_guard.md)。
+6. **bash_guard: 変数間接化は同一コマンド内の定数代入のみ展開できる** — `T=/; rm -rf $T` のように、同一コマンド文字列内で `VAR=定数値` の代入がある場合はそれを展開したうえでdeny判定する。しかし `$(...)` によるコマンド置換や、コマンド実行前に別途 `export` されている環境変数のように、コマンド文字列単体からは値が読み取れない動的な値は展開できない。この場合 `rm -rf $UNKNOWN` はdeny判定に届かず `ask`(`rm-recursive-or-force`)止まりとなる。黙って許可しているわけではないが、deny層の決定論的ブロックはこのケースには及ばない。詳細: [docs/hooks/bash_guard.md](hooks/bash_guard.md)。
+7. **bash_guard: force-pushの保護はrefspecの送信先ブランチ名に対して判定する** — `force-push-refspec` ルールは `git push origin +HEAD:main` のような `+` 付きrefspecを、コロンの右側(送信先ブランチ)が `bash_guard.protected_branches`(既定 `main`/`master`/`develop`/`release`/`production`)に一致する場合のみdenyにする。したがって `git push origin +main:feature`(ローカルの `main` を保護対象外のリモートブランチへ送る操作)はdenyにならない。保護対象はプッシュ「先」であって、ローカル側のブランチ名ではない。
+8. **bash_guard: bash経由の外部送信askはcurl/wgetのみ対象** — `curl`/`wget` がデータ送信フラグ(`-d`/`--data*`/`-F`/`--form`/`-T`/`--upload-file`/`--post-data`/`--post-file`/`--body-data`/`--body-file`)と機微オペランド(環境変数参照、コマンド置換、または `sensitive_paths.json` の保護ファイル名)を同時に含む場合に `ask` へ倒す。`exfil_guard`(MCP/WebFetch/WebSearch専用)ではカバーされないbash経由の外部送信の隙間を埋めるものだが、`scp`/`rsync`/`nc` など他の転送コマンドは対象外であり、`deny` に昇格することもない。
+9. **secrets_guard: write_protectedは正規表現+機械判定できる範囲のベストエフォート** — `secrets_guard.write_protected_paths` と自身の `hooks/`/`rules/` ディレクトリへの改変は、Edit/Writeの `file_path` およびBashコマンド中のシェル変異キーワード(リダイレクト `>`/`>>`(トークンに密着した `>file` を含む)、`dd of=`、`rm`/`mv`/`cp`/`sed -i`/`tee`/`truncate`/`ln`/`install`)を検査してdenyする。しかしシェルの変異キーワードを一切使わないインタプリタレベルの書き込み(例: `python3 -c "open('.claude-hooks.json','w').write(...)"`)は、この検査を素通りする。§3で述べた「正規表現+機械判定できるものは確実に止め、それ以外はベストエフォート」という設計方針の一貫した帰結であり、write_protectedも例外ではない。詳細: [docs/hooks/secrets_guard.md](hooks/secrets_guard.md)。
 
 ## 5. fail-open / fail-close 方針
 

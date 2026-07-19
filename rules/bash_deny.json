@@ -1,10 +1,9 @@
 [
-  {"name": "rm-root-or-home", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/|/\\*|~|~/|\\$HOME)(\\s|$)"},
+  {"name": "rm-root-or-home", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/(?!\\w)|~(?![\\w/])|~/(?!\\w)|\\$HOME(?![\\w/])|\\$HOME/(?!\\w))"},
+  {"name": "find-delete-root", "regex": "\\bfind\\s+(?:-\\S+\\s+){0,4}(/+|~|\\$HOME)\\s[^;|&]*(?:-delete\\b|-exec\\s+rm\\b)"},
   {"name": "rm-system-dir", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(etc|usr|var|bin|boot|lib|opt|srv)(/|\\s|$)"},
   {"name": "rm-home-root", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(home|Users)(/[\\w.-]+/?)?(\\s|$)"},
   {"name": "sudo-rm", "regex": "\\bsudo\\s+rm\\b"},
-  {"name": "force-push-protected", "regex": "\\bgit\\s+push\\s+[^;|&]*(--force\\b|-f\\b)[^;|&]*\\b(main|master)\\b"},
-  {"name": "force-push-protected-order", "regex": "\\bgit\\s+push\\s+[^;|&]*\\b(main|master)\\b[^;|&]*(--force\\b|-f\\b)"},
   {"name": "mkfs", "regex": "\\bmkfs(\\.|\\s)"},
   {"name": "dd-to-device", "regex": "\\bdd\\s+[^;|&]*of=/dev/"},
   {"name": "fork-bomb", "regex": ":\\(\\)\\s*\\{[^}]*\\}\\s*;?\\s*:"},

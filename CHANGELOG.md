@@ -2,6 +2,21 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.4.0] - 2026-07-19
+
+### Changed
+
+- **`bash_guard`: force-push保護をrefspecまで拡張** — `bash_guard.protected_branches`(既定 `["main","master","develop","release","production"]`)を新設し、`--force`/`-f` 形式に加えて `+` refspec形式(例: `git push origin +HEAD:main`)も検出。refspecの送信先(コロン右側)が保護対象ブランチかどうかで判定するため、`git push origin +main:feature`(ローカルの`main`を保護対象外のリモートブランチへ送る操作)はdenyにならない。
+- **`bash_guard`: `rm`/`find` のdeny降格対策** — `rm-root-or-home` に `rm -rf /.`・`rm -rf /..` のような末尾ドット回避を追加。新規 `find ... -delete` / `-exec rm` ルール(root/homeが対象なら `find-delete-root` でdeny、それ以外は `find-delete` でask)。同一コマンド内の定数代入(`T=/; rm -rf $T`)を展開してからdeny判定するようになった(動的な値は展開できず引き続きaskどまり)。
+- **`bash_guard`: curl/wgetの機微データ送信をask検査** — データ送信フラグ(`-d`/`--data*`/`-F`/`--form`/`-T`/`--upload-file`等)と機微オペランド(環境変数、コマンド置換、`sensitive_paths.json` の保護ファイル名)を同時に含む `curl`/`wget` をaskへ倒す。`exfil_guard`(MCP/WebFetch/WebSearch専用)ではカバーされないbash経由の外部送信の隙間を埋める(`scp`/`rsync`/`nc` は対象外)。
+- **`bash_guard`/`secrets_guard`: deny層の`enabled:false`免疫** — `bash_guard.enabled: false` はask層のみを無効化し、deny層は常に動作するよう修正(従来は無効化の余地があった)。`secrets_guard.enabled: false` はdeny層に対して完全にno-opとし、`systemMessage` で「enabled:false でも deny 層を無効化できません」と通知する。Hooksの完全無効化は `hooks/hooks.json` からの除去、または Claude Code 本体の `disableAllHooks` のみが正規の手段である。
+- **`secrets_guard`: write_protectedで設定/フック自体の改変を遮断** — `.claude-hooks.json`・`settings.json`・`settings.local.json`・`hooks.json`、およびこのインストール自身の `hooks/`/`rules/` ディレクトリへの `Edit`/`Write`、および `Bash` 経由の変異コマンド(リダイレクト・`dd of=`・`rm`/`mv`/`cp`/`sed -i`/`tee`/`truncate`/`ln`/`install`)をdenyする。読取(`Read`)は妨げない。新設定キー `secrets_guard.write_protected_paths`。
+
+### Docs
+
+- `docs/security-model.md`/`docs/configuration.md`/`docs/hooks/bash_guard.md`/`docs/hooks/secrets_guard.md` を上記の変更に合わせて更新。特に `configuration.md` の「denyは`enabled:false`で外せる」という誤った記述を訂正。
+- `CONTRIBUTING.md` にドッグフーディング時の注意(このリポジトリ自身のHooksを有効にしたまま `hooks/`/`rules/` を編集しようとするとwrite_protectedに遮断される旨)を追記。
+
 ## [0.3.0] - 2026-07-16
 
 ### Changed

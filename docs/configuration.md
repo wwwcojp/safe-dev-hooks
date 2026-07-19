@@ -32,12 +32,15 @@
     "enabled": true,
     "extra_deny": [],                        // 追加のdeny正規表現(解除不可)
     "extra_ask": [],                         // 追加のask正規表現
-    "allow": []                              // ask層のみ解除可能な正規表現(deny層は解除不可)
+    "allow": [],                             // ask層のみ解除可能な正規表現(deny層は解除不可)
+    "protected_branches": ["main", "master", "develop", "release", "production"]
+                                              // force-push denyの対象ブランチ(refspec送信先も判定)
   },
   "secrets_guard": {
     "enabled": true,
     "protected_paths": [],                   // 追加で保護するファイル名/パスのglobパターン
-    "allow_paths": []                        // 追加で許可するファイル名/パスのglobパターン
+    "allow_paths": [],                       // 追加で許可するファイル名/パスのglobパターン
+    "write_protected_paths": []              // 追加で書込保護するファイル名/パスのglobパターン(ビルトインへマージ、解除不可)
   },
   "exfil_guard": {
     "enabled": true,
@@ -89,7 +92,7 @@
 ## 3. 設計原則
 
 - **安全側の既定**: 設定ファイルが無くても全ガードが既定値で動く。
-- **denyの解除は不可**: `bash_guard.allow` で解除できるのは ask 層のみ。回復不能系 deny を外すには Hook 自体の無効化(`enabled: false` または `hooks.json` からの除去)しかない。
+- **denyの解除は不可**: `bash_guard.allow` で解除できるのは ask 層のみ。回復不能系 deny は設定ファイルからは一切解除できない。`enabled: false` は deny 層を解除しない — `bash_guard.enabled: false` は ask 層(`bash_ask.json`・`extra_ask`・curl/wgetの外部送信ask検査)のみを無効化し、`secrets_guard.enabled: false` はdeny層に対してはno-op(`systemMessage` で通知のうえ検査を継続)である。deny層を止める唯一の正規手段は `hooks/hooks.json` からのHook除去、または Claude Code 本体の `disableAllHooks` である。
 - **データ駆動**: 危険パターン・シークレット形式・PII形式は `rules/*.json` に集約されており、コード変更なしで拡張可能。`extra_deny`/`extra_ask`/`custom_patterns`/`protected_paths`/`allow_paths` はビルトインへマージされる。
 - **quality_gateの自動検出**: `commands` 未指定時は拡張子と `pyproject.toml`(ruff)、`package.json`(eslint)、`Cargo.toml`(rustfmt)等から推定する。検出不能なら何もしない。
 

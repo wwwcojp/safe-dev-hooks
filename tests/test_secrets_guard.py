@@ -1,3 +1,8 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from helpers import load_hook
 
@@ -62,3 +67,67 @@ def test_bash_path_like_tokens_still_denied():
     assert v1["decision"] == "deny"
     v2 = secrets_guard.evaluate(_event("Bash", command="cp .env.example .env"), CFG)
     assert v2["decision"] == "deny"
+
+
+def test_write_protected_edit_denied():
+    for path in [".claude-hooks.json", "/proj/.claude/settings.json",
+                 "/proj/.claude/settings.local.json"]:
+        v = secrets_guard.evaluate(_event("Write", file_path=path), CFG)
+        assert v is not None and v["decision"] == "deny", path
+        v2 = secrets_guard.evaluate(_event("Edit", file_path=path), CFG)
+        assert v2 is not None and v2["decision"] == "deny", path
+
+
+def test_write_protected_read_allowed():
+    assert secrets_guard.evaluate(_event("Read", file_path=".claude-hooks.json"), CFG) is None
+    assert secrets_guard.evaluate(_event("Bash", command="cat .claude-hooks.json"), CFG) is None
+
+
+def test_write_protected_bash_mutation_denied():
+    for cmd in ["echo x > .claude-hooks.json", "rm .claude-hooks.json",
+                "sed -i s/a/b/ .claude/settings.json"]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_write_protected_does_not_block_unrelated_settings():
+    for path in ["/app/.vscode/settings.json", "/app/webhooks/hooks.json"]:
+        assert secrets_guard.evaluate(_event("Write", file_path=path), CFG) is None, path
+
+
+def test_write_protected_read_with_redirect_allowed():
+    # 保護ファイルの「読取」はリダイレクトを伴っても通す(2>/dev/null 等)
+    for cmd in ["cat .claude-hooks.json 2>/dev/null",
+                "cat .claude-hooks.json > /tmp/out.json",
+                "grep foo .claude-hooks.json 2>&1"]:
+        assert secrets_guard.evaluate(_event("Bash", command=cmd), CFG) is None, cmd
+
+
+def test_write_protected_config_extends():
+    cfg = dict(CFG, write_protected_paths=["deploy.lock"])
+    v = secrets_guard.evaluate(_event("Write", file_path="deploy.lock"), cfg)
+    assert v["decision"] == "deny"
+
+
+def test_write_protected_glued_redirect_and_dd_denied():
+    for cmd in ["echo x >.claude-hooks.json",
+                "echo x>>.claude-hooks.json",
+                "dd if=/dev/zero of=.claude-hooks.json"]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_deny_survives_enabled_false_blackbox(tmp_path):
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"secrets_guard": {"enabled": false}}', encoding="utf-8"
+    )
+    script = (Path(__file__).resolve().parent.parent
+              / "hooks" / "pre_tool_use" / "secrets_guard.py")
+    event = {"tool_name": "Read", "cwd": str(tmp_path),
+             "tool_input": {"file_path": "/proj/.env"}}
+    r = subprocess.run([sys.executable, str(script)], input=json.dumps(event),
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "systemMessage" in out
