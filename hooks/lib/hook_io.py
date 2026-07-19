@@ -41,10 +41,12 @@ def finalize(out: dict | None, cfg: dict) -> None:
     errors = cfg.get("_errors") or []
     if errors:
         out = dict(out or {})
-        out["systemMessage"] = (
+        msg = (
             "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: "
             + "; ".join(errors)
         )
+        existing = out.get("systemMessage")
+        out["systemMessage"] = f"{existing}\n{msg}" if existing else msg
     if out:
         emit(out)
     sys.exit(0)

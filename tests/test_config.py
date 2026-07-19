@@ -105,3 +105,13 @@ def test_protected_branches_invalid_type_falls_back(tmp_path, monkeypatch):
         "main", "master", "develop", "release", "production"
     ]
     assert any("protected_branches" in e for e in cfg["_errors"])
+
+
+def test_write_protected_paths_invalid_type_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"secrets_guard": {"write_protected_paths": "x"}}', encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["secrets_guard"]["write_protected_paths"] == []
+    assert any("write_protected_paths" in e for e in cfg["_errors"])
