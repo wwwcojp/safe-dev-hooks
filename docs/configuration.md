@@ -35,6 +35,7 @@
     "allow": [],                             // ask層のみ解除可能な正規表現(deny層は解除不可)
     "protected_branches": ["main", "master", "develop", "release", "production"]
                                               // force-push denyの対象ブランチ(refspec送信先も判定)
+                                              // 空リスト [] にすると force-push の deny 昇格を無効化(ask層では拾われ得る)
   },
   "secrets_guard": {
     "enabled": true,

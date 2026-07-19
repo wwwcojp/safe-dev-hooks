@@ -51,3 +51,12 @@ def test_finalize_silent_when_nothing(capsys):
     with pytest.raises(SystemExit):
         hook_io.finalize(None, {})
     assert capsys.readouterr().out == ""
+
+
+def test_finalize_preserves_existing_system_message(capsys):
+    # 既存の systemMessage を設定エラー通知で握りつぶさず、両方残す
+    with pytest.raises(SystemExit):
+        hook_io.finalize({"systemMessage": "既存の注記"}, {"_errors": ["broken.json"]})
+    out = json.loads(capsys.readouterr().out)
+    assert "既存の注記" in out["systemMessage"]
+    assert "broken.json" in out["systemMessage"]

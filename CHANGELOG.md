@@ -17,6 +17,12 @@
 - `docs/security-model.md`/`docs/configuration.md`/`docs/hooks/bash_guard.md`/`docs/hooks/secrets_guard.md` を上記の変更に合わせて更新。特に `configuration.md` の「denyは`enabled:false`で外せる」という誤った記述を訂正。
 - `CONTRIBUTING.md` にドッグフーディング時の注意(このリポジトリ自身のHooksを有効にしたまま `hooks/`/`rules/` を編集しようとするとwrite_protectedに遮断される旨)を追記。
 
+### Fixed
+
+- `bash_guard`: `protected_branches` に空リスト `[]` を明示した場合、従来は `["main","master"]` へ暗黙フォールバックしていたのを、「保護ブランチ無し」として force-push の deny 規則を生成しないよう修正(空の正規表現による全ブランチ誤検知も回避)。
+- `bash_guard`: curl/wget 外部送信askの `allow` 照合を、ask層と同じくクォート除去後のセグメントに対して行うよう統一。
+- `hook_io.finalize`: 設定エラー通知が既存の `systemMessage`(例: `secrets_guard` の enabled:false 注記)を上書きしていたのを、両者を連結して保持するよう修正。
+
 ## [0.3.0] - 2026-07-16
 
 ### Changed

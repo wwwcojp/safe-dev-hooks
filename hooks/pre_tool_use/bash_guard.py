@@ -79,7 +79,11 @@ def _exfil_ask(segment: str) -> dict | None:
 
 
 def _force_push_rules(cfg: dict) -> list[dict]:
-    branches = cfg.get("protected_branches") or ["main", "master"]
+    branches = cfg.get("protected_branches")
+    if branches is None:  # キー未指定(直接呼び出し等)は最小限の既定で保護
+        branches = ["main", "master"]
+    if not branches:  # 空リスト = 保護ブランチ無し(force-push規則を生成しない)
+        return []
     alt = "|".join(re.escape(b) for b in branches)
     return [
         {"name": "force-push-protected",
@@ -125,8 +129,9 @@ def evaluate(command: str, cfg: dict) -> dict | None:
                     ),
                 }
     for seg in _segments(command):
-        verdict = _exfil_ask(seg)
-        if verdict and not any(re.search(a, seg) for a in allow):
+        nseg = _normalize(seg)
+        verdict = _exfil_ask(nseg)
+        if verdict and not any(re.search(a, nseg) for a in allow):
             return verdict
     return None
 
