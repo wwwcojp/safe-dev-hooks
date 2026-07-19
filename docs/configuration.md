@@ -10,17 +10,29 @@
 | 2 | `~/.claude/claude-hooks.json` | 利用者ごとの個人既定値 |
 | 3(最下位) | 同梱の `hooks/lib/config.py` 内 `DEFAULTS` | ビルトインの安全側既定値 |
 
-マージはキーごとの再帰的ディープマージ(`hooks/lib/config.py` の `_merge`)で行われる。オブジェクト値は再帰的にマージされ、それ以外(配列・文字列・真偽値等)は上位の値で丸ごと置き換えられる(**配列は追記ではなく置換**。例えば `bash_guard.extra_deny` をプロジェクト設定で指定すると、グローバル設定の同キーの値は使われず置き換わる)。
+設定ファイルが1つも無くても、全ガードはビルトイン既定値で動作する(「設定は有効化ではなく調整のため」という設計原則)。
 
-設定ファイルが1つも存在しなくても、全ガードはビルトイン既定値で動作する(「設定は調整のためであり、有効化のためではない」という設計原則)。
+### マージの規則
 
-マシン固有の値(例: `notify.command` に含める絶対パス)は、コミット対象であるプロジェクトの `.claude-hooks.json` ではなくグローバルの `~/.claude/claude-hooks.json` に置くこと。なお、Claude Code本体の `settings.json` / `settings.local.json` は本プラグインの設定読み込み対象ではない。
+- キーごとの再帰的ディープマージ(`hooks/lib/config.py` の `_merge`)。
+- オブジェクト(`{...}`)は再帰的にマージされる。
+- **配列・文字列・真偽値は、上位の層の値で丸ごと置き換わる(配列は追記ではなく置換)。** 例: プロジェクト設定で `bash_guard.extra_deny` を指定すると、グローバル設定の同キーは使われず置き換わる。
 
-### 設定自体の検証
+### どの層に何を置くか
 
-起動時に各セクションの型をビルトイン既定値の型と比較し、不一致であれば当該セクションのみビルトイン既定値へフォールバックする。フォールバックが発生した場合、Hookの出力に `systemMessage` として `[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: ...` という警告が付与される(判定自体は継続される)。JSON構文エラーやオブジェクトでない設定ファイルも同様に無視され、警告のみで安全側の既定値が使われる。
+- **チーム共有**の設定 → コミット対象のプロジェクト `.claude-hooks.json`。
+- **マシン固有の値**(例: `notify.command` の絶対パス)や**個人の既定値** → グローバルの `~/.claude/claude-hooks.json`。
+- Claude Code 本体の `settings.json` / `settings.local.json` は本プラグインの設定読み込み対象ではない(混同しやすいので注意)。
 
-型検証に加えて、列挙値のタイポも検証する。`exfil_guard.mode`・`exfil_output_scan.action`・`quality_gate.mode` は許容値の集合と照合し、一致しなければ当該キーのみビルトイン既定値へ戻す。`exfil_guard.categories` の各カテゴリは `deny`/`ask`/`off` のいずれかであることを検証し、不正な値は既定に定義済みのカテゴリなら既定値へ、既定に無い未知のカテゴリキーであればそのキー自体を削除する。いずれも `_errors` に1件ずつ記録され、他の検証と同様に安全側の既定値へフォールバックする。
+### 設定エラー時の挙動(常に安全側)
+
+不正な設定は無視され、該当箇所だけビルトイン既定値へフォールバックしたうえで `systemMessage` で警告する(検査自体は止めない)。
+
+- **型不一致**(セクションの型が既定と違う)→ そのセクションを既定へ。
+- **JSON構文エラー / オブジェクトでない設定ファイル** → そのファイルを無視。
+- **列挙値のタイポ** → 該当キーのみ既定へ。対象は `exfil_guard.mode`・`exfil_output_scan.action`・`quality_gate.mode`、および `exfil_guard.categories` の各値(`deny`/`ask`/`off`)。既定に無い未知のカテゴリキーは削除する。
+
+いずれも `_errors` に1件ずつ記録され、Hook出力に `[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: ...` が付く。
 
 ## 2. 全スキーマ
 
@@ -114,7 +126,8 @@
 ```json
 {
   "bash_guard": {
-    "extra_deny": ["docker system prune -a"]
+    "extra_deny": ["docker system prune -a"],
+    "protected_branches": ["main", "master", "develop", "release", "production"]
   },
   "exfil_guard": {
     "custom_patterns": [
@@ -152,7 +165,8 @@
     "action": "redact"
   },
   "secrets_guard": {
-    "protected_paths": ["config/secrets/**", "**/*.credentials"]
+    "protected_paths": ["config/secrets/**", "**/*.credentials"],
+    "write_protected_paths": ["deploy/*.lock", "infra/**/*.tfstate"]
   }
 }
 ```

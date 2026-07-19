@@ -1,79 +1,90 @@
-# safe-dev-hooks — Claude Codeで安全に開発するためのHooks集
+# safe-dev-hooks — Claude Codeで安全に開発する
 
 [English README](README.md)
 
-Claude Code の Hooks 機能を使って、エージェントの事故・暴走を防ぐための8本のHookをまとめた公開リポジトリです。世の中のベストプラクティス([出典はこちら](docs/best-practices.md))を踏まえて設計しています。
+AIエージェントの事故や暴走 — 破壊的コマンド・シークレット漏洩・未レビューの編集 — を未然に止める、[Claude Code Hooks](https://docs.claude.com/en/docs/claude-code/hooks) 8本のコレクションです。設定なしですぐ動く安全側の既定値つき。世の中の[ベストプラクティス](docs/best-practices.md)を踏まえて設計しています。
 
-## 1. 概要 — 何を防ぐか
+## 何を防ぐか
 
-このHooks集は、Claude Codeでの開発中に起こり得る次の5種類のリスクを防ぐことを目的としています。
+Claude Code での開発中に起こり得る、次の5種類の事故を防ぎます。
 
-1. **破壊的コマンドの実行** — `rm -rf /`、`sudo rm`、保護ブランチへの force push、`mkfs`、`dd`、fork bomb、`DROP TABLE` 等
-2. **機密情報の漏洩** — `.env` や秘密鍵など機密ファイルへの読取・編集・アクセス、シークレットの書き込み・外部送信
-3. **品質の劣化** — lint/format を通さないままの編集の混入
-4. **可視性の欠如** — 何が実行されたか・いつ許可待ちになったかが分からない
-5. **MCPツール入出力を経由した情報漏洩** — 認証情報・PII・企業機微情報がMCP/Web経由で送受信されること
+1. **破壊的コマンド** — `rm -rf /`、`sudo rm`、保護ブランチへの force push、`mkfs`、`dd`、fork bomb、`DROP TABLE` など。
+2. **シークレット漏洩** — `.env`・秘密鍵・クラウド認証情報の読取・編集・外部送信。
+3. **品質の劣化** — lint/format を通さないまま入る編集。
+4. **記録の欠如** — 何が実行されたか・いつ許可待ちになったかが残らない。
+5. **MCP/Webツール経由の漏洩** — 認証情報・PII・企業機微情報が、ツール引数で外へ出たり、ツール応答で入ってきたりすること。
 
-いずれも「悪意あるユーザーからの防御」ではなく、**エージェントの事故防止**を目的としています(詳細は [保証範囲](#6-保証範囲) と [docs/security-model.md](docs/security-model.md) を参照)。
+これは**悪意あるユーザーへの防御ではありません** — Claude Code の設定を触れる人はHooksをOFFにできます。目的は、エージェント自身が高くつく失敗をしないよう止めることです。何をどこまでカバーするかは[保証範囲](#保証すること--しないこと)を参照してください。
 
-## 2. クイックスタート
+## 導入
 
-### 前提条件
-
-- [`uv`](https://docs.astral.sh/uv/) が必須です(Python本体は uv が解決するため個別インストール不要。ただしマシンに Python 3.10 以上が無い場合、初回に uv がインタプリタをダウンロードするためネットワーク接続が必要です — 「5. 動作確認方法」のウォームアップ手順を参照)
-- **uv が無い・実行に失敗する環境では、Hookはエラーになりますが Claude Code は警告のみで処理を続行します(フェイルオープン)。全ガードが黙って無効になるため、導入後は「5. 動作確認方法」を必ず実施してください**(uv 無しで使う方法は次項)
-- `exfil_guard` の semantic 判定(意味的なDLP判定)は Claude Code CLI(`claude` コマンド)が `PATH` にある場合のみ動作します。無い場合は自動的にスキップされ、正規表現ベースの他カテゴリのみで動作を継続します
-
-### プラグインとして導入する
+### 1. プラグインを追加する
 
 ```
 /plugin marketplace add wwwcojp/safe-dev-hooks
 /plugin install safe-dev-hooks
 ```
 
-これで8本のHookすべてが `hooks/hooks.json` の配線どおりに有効になります。
+これで8本すべてが `hooks/hooks.json` の配線どおりに有効になります。必要なのは `PATH` 上の [`uv`](https://docs.astral.sh/uv/) だけ — Python本体は uv が用意するので、個別インストールは不要です。一部のHookだけ動かしたい場合は、下の[手動導入](#手動導入部分導入)を使ってください。
 
-### 手動導入する(コピペで部分導入も可能)
+### 2. 動作確認 — 導入直後に一度、必須
+
+> [!IMPORTANT]
+> **Hooksはフェイルオープンです。** `uv` が無い・エラーになると、各Hookは非ゼロ終了し、Claude Code は警告するだけで処理を続行し、**全ガードが黙ってno-op(素通し)になります**。通常利用では気づけないので、導入後に必ず下のコマンドを一度実行してください(`uv` の初回インタプリタ取得 — Hookの10秒タイムアウトを超え、同じくフェイルオープンし得る — のウォームアップも兼ねます)。
+
+模擬イベントを `bash_guard` に流し、破壊的コマンドが `deny` されることを確認します。
+
+```bash
+echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | uv run hooks/pre_tool_use/bash_guard.py
+```
+
+`"permissionDecision": "deny"` を含むJSONが1行返れば正常です。
+
+```json
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "破壊的コマンドを検出: rm-root-or-home(deny層は設定で解除できません)"}}
+```
+
+### 手動導入・部分導入
+
+必要なHookだけ選びたい、あるいはプラグイン機構を使いたくない場合は、クローンして設定スニペットを `~/.claude/settings.json` にマージします。
 
 ```bash
 git clone https://github.com/wwwcojp/safe-dev-hooks.git
 ```
 
-[`examples/settings.full.json`](examples/settings.full.json)(全Hook)または [`examples/settings.minimal.json`](examples/settings.minimal.json)(bash_guard + secrets_guard のみの最小構成)の内容を `~/.claude/settings.json` にマージしてください。パス中の `$HOME/safe-dev-hooks` は実際に `git clone` したパスに置き換えます。関心事別モジュール構成のため、必要なHookだけを部分的に導入することもできます。
+- **全Hook:** [`examples/settings.full.json`](examples/settings.full.json) をマージ。
+- **最小構成(`bash_guard` + `secrets_guard` のみ):** [`examples/settings.minimal.json`](examples/settings.minimal.json) をマージ。
 
-### uvを使わずに動かす(手動導入のみ)
+マージするスニペット中の `$HOME/safe-dev-hooks` を、実際にクローンした場所に置き換えます。各Hookは自己完結したモジュールなので、一部だけの導入で問題ありません。
 
-各Hookスクリプトの依存はPython標準ライブラリのみのため、Python 3.10 以上が `PATH` にあれば uv なしでも動作します。手動導入時に `~/.claude/settings.json` へマージするコマンドの `uv run` を `python3` に置き換えてください。
+**`uv` を使わない場合:** 各Hookスクリプトの依存はPython標準ライブラリのみなので、Python 3.10 以上があれば動きます。マージするコマンドの `uv run` を `python3` に置き換えてください — ただしシステムの `python3` が 3.10 未満だと全Hookが失敗(フェイルオープン=素通し)するため、上の動作確認を必ず再実行してください。この方法は手動導入専用です(プラグインは `uv` 前提の配線)。
 
-```json
-{"type": "command", "command": "python3 \"$HOME/safe-dev-hooks/hooks/pre_tool_use/bash_guard.py\"", "timeout": 10}
-```
+> `exfil_guard` の任意の semantic 判定(LLMによるDLP判定)は、`claude` CLI が `PATH` にある場合のみ動作します。無ければその判定だけスキップされ、正規表現ベースの検査は動き続けます。
 
-トレードオフ: uv が担っている「Python 3.10 以上の自動調達」が無くなるため、システムの `python3` が 3.10 未満だと全Hookが失敗します(前述のとおりフェイルオープン=素通しになるため、置き換え後は必ず動作確認してください)。プラグイン導入の場合は `hooks/hooks.json` が uv 前提のため、この方法は使えません。
-
-## 3. Hook一覧
+## Hook一覧
 
 | Hook | イベント / matcher | 動作 |
 |------|--------------------|------|
-| [bash_guard](docs/hooks/bash_guard.md) | PreToolUse / `Bash` | 回復不能系(`rm -rf /`、`sudo rm`、保護ブランチへのforce push、`mkfs`、`dd`、fork bomb、`DROP TABLE`等)は deny。グレー系(`git reset --hard`、`git clean -f`、再帰/強制の`rm`、`curl\|bash`等)は ask。`&&` `;` `\|\|` で連結されたコマンドも分解して検査 |
-| [secrets_guard](docs/hooks/secrets_guard.md) | PreToolUse / `Read\|Edit\|Write\|Bash` | `.env`(`.env.example`等は許可)、`*.pem` / `id_rsa`、`~/.ssh/`、`~/.aws/credentials` 等への読取・編集・catを deny |
-| [exfil_guard](docs/hooks/exfil_guard.md) | PreToolUse / `mcp__.*\|WebFetch\|WebSearch` | 外部送信引数のDLP検査(認証情報・PII・機密マーカー・カスタムパターン・semantic判定) |
-| [exfil_output_scan](docs/hooks/exfil_output_scan.md) | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | 応答に含まれるシークレット・PIIの検出。警告(`additionalContext`)またはマスキング(`updatedToolOutput`)を設定で選択 |
-| [quality_gate](docs/hooks/quality_gate.md) | PostToolUse / `Edit\|Write` | 編集ファイルへ lint/format を実行し、エラーは `decision:block` でClaudeに自己修正させる(warn/block設定可) |
-| [secrets_scan](docs/hooks/secrets_scan.md) | PostToolUse / `Edit\|Write` | 書き込み内容からAWSキー・GitHubトークン・秘密鍵ブロック等を検出し block |
-| [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | 全ツール実行とセッション境界を JSONL で非同期記録 |
-| [notify](docs/hooks/notify.md) | Notification | 許可待ち・アイドル時の通知(既定はデスクトップ通知の自動判別、不可ならベル。bell固定・コマンド差し替えも可) |
+| [bash_guard](docs/hooks/bash_guard.md) | PreToolUse / `Bash` | 回復不能系を **deny**(`rm -rf /`、`sudo rm`、保護ブランチへの force push — `+refspec` 形式を含む、`mkfs`、`dd`、fork bomb、`DROP TABLE`、`/`・`~` に対する `find … -delete`)。グレー系は **ask**(`git reset --hard`、再帰/強制の `rm`、`curl\|bash`、`curl`/`wget` でのシークレット送信)。保護ブランチは設定可能。連結コマンド(`&&` `;` `\|\|`)は分解して各セグメントを検査。 |
+| [secrets_guard](docs/hooks/secrets_guard.md) | PreToolUse / `Read\|Edit\|Write\|Bash` | 機密ファイルの読取・編集・`cat` を deny(`.env` — `.env.example` は許可 — `*.pem`、`id_rsa`、`~/.ssh/`、`~/.aws/credentials`)。さらに**Hook自身の設定・スクリプトを書込保護**(`.claude-hooks.json`、`.claude/settings.json`、導入済みの `hooks/`・`rules/`)し、エージェントが自分のガードを無力化できないようにする — 読取は許可。 |
+| [exfil_guard](docs/hooks/exfil_guard.md) | PreToolUse / `mcp__.*\|WebFetch\|WebSearch` | 外部送信引数のDLP検査(認証情報・PII・機密マーカー・カスタムパターン・任意のsemantic判定)。 |
+| [exfil_output_scan](docs/hooks/exfil_output_scan.md) | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | ツール応答に含まれるシークレット・PIIを検出。警告かマスキングかを設定で選択。 |
+| [quality_gate](docs/hooks/quality_gate.md) | PostToolUse / `Edit\|Write` | 編集ファイルへ lint/format を実行し、失敗時は block してClaudeに自己修正させる(warn/block設定可)。 |
+| [secrets_scan](docs/hooks/secrets_scan.md) | PostToolUse / `Edit\|Write` | 書き込み内容からAWSキー・GitHubトークン・秘密鍵ブロック等を検出し block。 |
+| [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | 全ツール実行とセッション境界を JSONL で非同期記録。 |
+| [notify](docs/hooks/notify.md) | Notification | 許可待ち・アイドル時に通知。既定はデスクトップ通知の自動判別(不可ならベル)。bell固定・カスタムコマンドも可。 |
 
-## 4. 設定
+## カスタマイズ
 
-すべてのキーは任意です。設定ファイルが無くても、全ガードは安全側の既定値で動作します。プロジェクト直下の `.claude-hooks.json` が最優先、次に `~/.claude/claude-hooks.json`(個人既定値)、最後に同梱の `rules/*.json`(ビルトイン既定)がマージされます。
+すべての設定は**任意**です — 設定ファイルが無くても全ガードは安全側の既定値で動きます。設定は「有効化」ではなく「調整」のためのものです。deny層を設定ファイルから緩めることはできません。
 
-最小例:
+チームで共有する設定はリポジトリ直下の `.claude-hooks.json` に、個人の既定値は `~/.claude/claude-hooks.json` に置きます。(これらはHook独自の設定ファイルで、Claude Code 本体の `settings.json`(Hookの配線のみを行い、挙動の調整はしない)とは別物です。)最小例:
 
 ```json
 {
   "bash_guard": {
-    "extra_deny": ["docker system prune"]
+    "extra_deny": ["docker system prune"],
+    "protected_branches": ["main", "release"]
   },
   "exfil_guard": {
     "trusted_servers": ["mcp__internal-kb"]
@@ -81,36 +92,16 @@ git clone https://github.com/wwwcojp/safe-dev-hooks.git
 }
 ```
 
-全スキーマ・3層マージの詳細・個人用/チーム用/高セキュリティの設定プリセットは [docs/configuration.md](docs/configuration.md) を参照してください。
+全スキーマ・3層マージ・個人用/チーム用/高セキュリティのプリセットは [docs/configuration.md](docs/configuration.md) を参照してください。
 
-## 5. 動作確認方法(初回は必須のウォームアップ手順)
+## 保証すること / しないこと
 
-各Hookスクリプトは `uv run --script` シバンで実行されるため、そのマシンでの初回実行時にPythonインタプリタの取得・インストールが走ることがあり、Hook自体のタイムアウト(10秒)を超えてしまう場合があります。導入直後に以下のコマンドを一度実行し、実際のHook呼び出しの外でこのセットアップを済ませておいてください。単なる任意の動作確認ではなく、必須のウォームアップ手順として扱ってください。
+**保証すること。** deny層の照合(`bash_guard` / `secrets_guard`)は Claude Code の permission mode に依らず決定論的で、**設定ファイルからは解除できません** — `enabled: false` でも不可で、これは緩いask層のみを無効化します。deny層を外す唯一の方法はHook自体の除去です。
 
-`bash_guard` が破壊的コマンドを検出して `deny` を返すことを、実際にHookスクリプトへ模擬イベントを流して確認できます。
+**保証しないこと。** Hooks は Claude Code の `disableAllHooks` や設定削除で丸ごと迂回できます — これは悪意あるユーザー対策ではなく、エージェントの事故防止です。正規表現ルールは未知・難読化された攻撃をすべては捕捉できず、任意の semantic 判定は確率的(`ask` 専用)です。保証すること/しないことの全体像と具体的な既知の限界は[セキュリティモデル](docs/security-model.md)を参照してください。
 
-```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | uv run hooks/pre_tool_use/bash_guard.py
-```
-
-以下の内容を含むJSON(`permissionDecision: "deny"`)が1行で返れば正常です。
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": "破壊的コマンドを検出: rm-root-or-home(deny層は設定で解除できません)"
-  }
-}
-```
-
-## 6. 保証範囲
-
-Hooksは Claude Code の `disableAllHooks` 設定や Hook 自体の設定削除で無効化できるため、**悪意あるユーザーへの防御ではなく、エージェントの事故・暴走を防ぐための仕組み**です。deny層のパターンは permission mode に依らず決定論的にブロックされ、設定ファイルからは解除できませんが、正規表現の網羅性・semantic判定の確率性には既知の限界があります。保証すること/しないことの全体像は [docs/security-model.md](docs/security-model.md) を参照してください。
-
-## 7. License / Contributing
+## License / Contributing
 
 - ライセンス: [LICENSE](LICENSE)(MIT)
-- コントリビュート方法: [CONTRIBUTING.md](CONTRIBUTING.md)
+- コントリビュート: [CONTRIBUTING.md](CONTRIBUTING.md)
 - 変更履歴: [CHANGELOG.md](CHANGELOG.md)
