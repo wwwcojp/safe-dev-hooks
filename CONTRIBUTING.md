@@ -7,6 +7,13 @@
 - [`uv`](https://docs.astral.sh/uv/)(Python本体はuvが解決するため個別インストール不要)
 - リポジトリのclone後、依存関係のインストールは不要(`uv run` が都度解決する)。開発用ツール(`pytest`/`ruff`)を明示的にインストールしたい場合は `uv sync` を実行する
 
+### ドッグフーディング時の注意(このリポジトリ自身のHooksを有効にして開発する場合)
+
+`secrets_guard` の `write_protected` は、このインストール自身の `hooks/`/`rules/` ディレクトリ配下と `.claude-hooks.json`/`settings.json`/`settings.local.json`/`hooks.json` への改変(`Edit`/`Write`/Bash経由の変異コマンド)をdenyする(詳細: [docs/hooks/secrets_guard.md](docs/hooks/secrets_guard.md))。このプラグイン自身を有効にした状態でこのリポジトリを開発すると、まさに開発対象である `hooks/*.py` や `rules/*.json` の編集がこのHookによって遮断される。開発中は次のいずれかで回避すること。
+
+- このプラグインを一時的に無効化する(`disableAllHooks` または `hooks.json` の除去)
+- プラグインを別ディレクトリへ導入したインストールから、このリポジトリを編集対象にする(自己参照させない)
+
 ## 危険パターン・シークレット形式・PII形式の追加手順
 
 危険コマンド・機密ファイルパス・シークレット形式・PII形式・機密マーカーは、すべて `rules/*.json` にデータとして定義されています(コード変更なしで拡張できる設計、[docs/best-practices.md](docs/best-practices.md) 参照)。新しいパターンを追加する場合は次の手順に従ってください。
