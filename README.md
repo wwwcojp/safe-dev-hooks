@@ -2,7 +2,7 @@
 
 [日本語版: README.ja.md](README.ja.md)
 
-A collection of 8 [Claude Code Hooks](https://docs.claude.com/en/docs/claude-code/hooks) that catch an AI agent's mistakes and runaway actions before they happen — destructive commands, secret leaks, and unreviewed edits — with safe defaults that work out of the box and no configuration required. Designed around community [best practices](docs/best-practices.md).
+A collection of 9 [Claude Code Hooks](https://docs.claude.com/en/docs/claude-code/hooks) that catch an AI agent's mistakes and runaway actions before they happen — destructive commands, secret leaks, and unreviewed edits — with safe defaults that work out of the box and no configuration required. Designed around community [best practices](docs/best-practices.md).
 
 ## What it protects against
 
@@ -25,7 +25,7 @@ This is **not a defense against a malicious user** — anyone who can edit Claud
 /plugin install safe-dev-hooks
 ```
 
-That enables all 8 hooks as wired in `hooks/hooks.json`. The only requirement is [`uv`](https://docs.astral.sh/uv/) on your `PATH` — it provisions the Python runtime itself, so you don't need a separate Python install. To run only a subset of the hooks, use [manual install](#manual-install--partial-adoption) instead.
+That enables all 9 hooks as wired in `hooks/hooks.json`. The only requirement is [`uv`](https://docs.astral.sh/uv/) on your `PATH` — it provisions the Python runtime itself, so you don't need a separate Python install. To run only a subset of the hooks, use [manual install](#manual-install--partial-adoption) instead.
 
 ### 2. Verify — required, once, right after installing
 
@@ -68,12 +68,13 @@ In the snippet you merge, replace `$HOME/safe-dev-hooks` with your clone path. E
 | Hook | Event / matcher | What it does |
 |------|-----------------|--------------|
 | [bash_guard](docs/hooks/bash_guard.md) | PreToolUse / `Bash` | **Denies** irrecoverable operations (`rm -rf /`, `sudo rm`, force-push to a protected branch — including `+refspec` forms, `mkfs`, `dd`, fork bombs, `DROP TABLE`, `find … -delete` at `/` or `~`). **Asks** on gray-area ones (`git reset --hard`, recursive/forced `rm`, `curl\|bash`, or sending a secret via `curl`/`wget`). Protected branches are configurable; chained commands (`&&` `;` `\|\|`) are split and each segment inspected. |
-| [secrets_guard](docs/hooks/secrets_guard.md) | PreToolUse / `Read\|Edit\|Write\|Bash` | Denies reading/editing/`cat`-ing secret files (`.env` — `.env.example` is allowed — `*.pem`, `id_rsa`, `~/.ssh/`, `~/.aws/credentials`). Also **write-protects the hooks' own config and scripts** (`.claude-hooks.json`, `.claude/settings.json`, the installed `hooks/` and `rules/`) so the agent can't defang its own guards — reads still allowed. |
+| [secrets_guard](docs/hooks/secrets_guard.md) | PreToolUse / `Read\|Edit\|Write\|Bash` | Denies reading/editing/`cat`-ing secret files (`.env` — `.env.example` is allowed — `*.pem`, `id_rsa`, `~/.ssh/`, `~/.aws/credentials`). Also **write-protects the hooks' own config and scripts** (`.claude-hooks.json`, `.claude/settings.json`, `.mcp.json`, `.claude.json`, the installed `hooks/` and `rules/`) so the agent can't defang its own guards — covers shell mutations and curl/wget output flags; reads still allowed. |
 | [exfil_guard](docs/hooks/exfil_guard.md) | PreToolUse / `mcp__.*\|WebFetch\|WebSearch` | DLP inspection of outbound arguments (credentials, PII, confidentiality markers, custom patterns, optional semantic check). |
 | [exfil_output_scan](docs/hooks/exfil_output_scan.md) | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | Detects secrets/PII in tool responses; configurable to warn or mask them. |
 | [quality_gate](docs/hooks/quality_gate.md) | PostToolUse / `Edit\|Write` | Runs lint/format on the edited file and, on failure, blocks so Claude self-corrects (warn/block configurable). |
 | [secrets_scan](docs/hooks/secrets_scan.md) | PostToolUse / `Edit\|Write` | Detects AWS keys, GitHub tokens, private-key blocks, etc. in written content and blocks. |
-| [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / `*` | Records every tool call and session boundary as JSONL, asynchronously. |
+| [audit_log](docs/hooks/audit_log.md) | PreToolUse / PostToolUse / SessionStart / SessionEnd / Stop / ConfigChange / `*` | Records every tool call and session boundary as JSONL, asynchronously. |
+| [config_guard](docs/hooks/config_guard.md) | ConfigChange | Detection-only: surfaces any mid-session settings change (and an active `disableAllHooks`) via a system message, so guards can't be silently disabled through paths write-protection can't see. |
 | [notify](docs/hooks/notify.md) | Notification | Notifies on permission-wait/idle. Default is an auto-detected desktop notification (bell fallback); bell-only or a custom command also available. |
 
 ## Customize

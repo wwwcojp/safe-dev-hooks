@@ -28,6 +28,12 @@ _KEYWORD_MUTATOR_RE = re.compile(
     r"|\btruncate\b|\bdd\b|\binstall\b|\bln\b)"
 )
 
+_DOWNLOAD_TOOL_RE = re.compile(r"\b(curl|wget)\b")
+_DOWNLOAD_LONG_FLAGS = ("--output", "--output-document", "--output-file", "--append-output")
+# 短縮フラグ: curl は -o。wget は -O(本体)/-o(ログ)/-a(ログ追記)— いずれも保護ファイルを改変できる
+_CURL_SHORT_OUT_RE = re.compile(r"^-[A-Za-z]*o(\S*)$")
+_WGET_SHORT_OUT_RE = re.compile(r"^-[A-Za-z]*[Ooa](\S*)$")
+
 
 def _mutation_target_tokens(seg: str) -> list[str]:
     """このセグメントで実際に書き込み対象となり得るトークンだけを収集する。"""
@@ -46,6 +52,46 @@ def _mutation_target_tokens(seg: str) -> list[str]:
     if _KEYWORD_MUTATOR_RE.search(seg):  # (c) キーワード変異子は引数特定が難しく安全側で全トークン
         candidates.extend(toks)
     return candidates
+
+
+def _download_output_tokens(seg: str) -> list[str]:
+    """curl/wget の出力フラグ(-o/-O/--output/--output-document)の引数だけを収集する。
+
+    ダウンロードによるファイル書込はシェルの変異キーワードを伴わないため、
+    _mutation_target_tokens とは別に出力フラグの引数トークンのみを対象とする
+    (URL等の無関係トークンを巻き込まない)。
+    """
+    tools = set(_DOWNLOAD_TOOL_RE.findall(seg))
+    if not tools:
+        return []
+    short_res = []
+    if "curl" in tools:
+        short_res.append(_CURL_SHORT_OUT_RE)
+    if "wget" in tools:
+        short_res.append(_WGET_SHORT_OUT_RE)
+    try:
+        toks = shlex.split(seg)
+    except ValueError:
+        toks = seg.split()
+    out: list[str] = []
+    for i, t in enumerate(toks):
+        if t in _DOWNLOAD_LONG_FLAGS and i + 1 < len(toks):
+            out.append(toks[i + 1])
+            continue
+        if t.startswith("--"):
+            for flag in _DOWNLOAD_LONG_FLAGS:
+                if t.startswith(flag + "="):
+                    out.append(t.split("=", 1)[1])
+            continue
+        for short_re in short_res:
+            sm = short_re.match(t)
+            if sm:
+                if sm.group(1):
+                    out.append(sm.group(1))
+                elif i + 1 < len(toks):
+                    out.append(toks[i + 1])
+                break
+    return out
 
 
 def _looks_like_path(token: str) -> bool:
@@ -129,9 +175,9 @@ def evaluate(event: dict, cfg: dict) -> dict | None:
                         "reason": f"機密ファイルへのアクセスを遮断: {tok}"
                                   f"(該当ルール: {check_path(tok, cfg)})"}
         for seg in _SEGMENT_RE.split(command):
-            if not _MUTATION_RE.search(seg):
-                continue
-            seg_tokens = _mutation_target_tokens(seg)
+            seg_tokens = _download_output_tokens(seg)
+            if _MUTATION_RE.search(seg):
+                seg_tokens.extend(_mutation_target_tokens(seg))
             for tok in seg_tokens:
                 if not _looks_like_path(tok):
                     continue

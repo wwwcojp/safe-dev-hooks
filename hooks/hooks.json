@@ -58,6 +58,12 @@
     ],
     "Notification": [
       {"hooks": [{"type": "command", "command": "uv run \"${CLAUDE_PLUGIN_ROOT}/hooks/notification/notify.py\"", "timeout": 10}]}
+    ],
+    "ConfigChange": [
+      {"hooks": [
+        {"type": "command", "command": "uv run \"${CLAUDE_PLUGIN_ROOT}/hooks/config_change/config_guard.py\"", "timeout": 10},
+        {"type": "command", "command": "uv run \"${CLAUDE_PLUGIN_ROOT}/hooks/audit/audit_log.py\"", "timeout": 10, "async": true}
+      ]}
     ]
   }
 }
