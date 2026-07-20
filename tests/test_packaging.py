@@ -81,7 +81,7 @@ def test_all_rules_json_parse_and_regex_compile():
                 assert "name" in item and "regex" in item, path.name
                 re.compile(item["regex"])
         elif path.name == "sensitive_paths.json":
-            for key in ("protected", "protected_dirs", "allow"):
+            for key in ("protected", "protected_dirs", "allow", "write_protected"):
                 assert isinstance(data[key], list) and data[key], path.name
                 assert all(isinstance(v, str) and v for v in data[key]), path.name
         elif path.name == "confidential_markers.json":

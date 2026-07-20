@@ -117,6 +117,15 @@ def test_write_protected_glued_redirect_and_dd_denied():
         assert v is not None and v["decision"] == "deny", cmd
 
 
+def test_write_protected_mcp_and_claude_json_denied():
+    # MCPサーバ定義・グローバル設定は任意コマンド実行経路になるため書込保護(0.5.0)
+    for path in [".mcp.json", "/proj/.mcp.json", "/home/alice/.claude.json"]:
+        v = secrets_guard.evaluate(_event("Write", file_path=path), CFG)
+        assert v is not None and v["decision"] == "deny", path
+    assert secrets_guard.evaluate(_event("Read", file_path=".mcp.json"), CFG) is None
+    assert secrets_guard.evaluate(_event("Bash", command="cat .mcp.json"), CFG) is None
+
+
 def test_deny_survives_enabled_false_blackbox(tmp_path):
     (tmp_path / ".claude-hooks.json").write_text(
         '{"secrets_guard": {"enabled": false}}', encoding="utf-8"
