@@ -62,9 +62,9 @@ def main() -> None:
                 "\n[safe-dev-hooks] 警告: disableAllHooks が有効です。"
                 "全Hooks(本ガードを含む)が無効化されます。"
             )
-        hook_io.finalize({"systemMessage": msg}, cfg_all)
-    except Exception as exc:  # 検知専用のため fail-open
+    except Exception as exc:  # 検知専用のため fail-open(メッセージ計算の失敗のみ捕捉)
         hook_io.fail_open("config_guard", exc)
+    hook_io.finalize({"systemMessage": msg}, cfg_all)
 
 
 if __name__ == "__main__":
