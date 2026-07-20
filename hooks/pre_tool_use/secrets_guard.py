@@ -29,10 +29,10 @@ _KEYWORD_MUTATOR_RE = re.compile(
 )
 
 _DOWNLOAD_TOOL_RE = re.compile(r"\b(curl|wget)\b")
-_DOWNLOAD_LONG_FLAGS = ("--output", "--output-document")
-# 短縮フラグ: curl は -o(バンドル末尾・密着引数 -oFILE を含む)、wget は -O
+_DOWNLOAD_LONG_FLAGS = ("--output", "--output-document", "--output-file", "--append-output")
+# 短縮フラグ: curl は -o。wget は -O(本体)/-o(ログ)/-a(ログ追記)— いずれも保護ファイルを改変できる
 _CURL_SHORT_OUT_RE = re.compile(r"^-[A-Za-z]*o(\S*)$")
-_WGET_SHORT_OUT_RE = re.compile(r"^-[A-Za-z]*O(\S*)$")
+_WGET_SHORT_OUT_RE = re.compile(r"^-[A-Za-z]*[Ooa](\S*)$")
 
 
 def _mutation_target_tokens(seg: str) -> list[str]:
@@ -61,10 +61,14 @@ def _download_output_tokens(seg: str) -> list[str]:
     _mutation_target_tokens とは別に出力フラグの引数トークンのみを対象とする
     (URL等の無関係トークンを巻き込まない)。
     """
-    m = _DOWNLOAD_TOOL_RE.search(seg)
-    if not m:
+    tools = set(_DOWNLOAD_TOOL_RE.findall(seg))
+    if not tools:
         return []
-    short_re = _CURL_SHORT_OUT_RE if m.group(1) == "curl" else _WGET_SHORT_OUT_RE
+    short_res = []
+    if "curl" in tools:
+        short_res.append(_CURL_SHORT_OUT_RE)
+    if "wget" in tools:
+        short_res.append(_WGET_SHORT_OUT_RE)
     try:
         toks = shlex.split(seg)
     except ValueError:
@@ -79,12 +83,14 @@ def _download_output_tokens(seg: str) -> list[str]:
                 if t.startswith(flag + "="):
                     out.append(t.split("=", 1)[1])
             continue
-        sm = short_re.match(t)
-        if sm:
-            if sm.group(1):
-                out.append(sm.group(1))
-            elif i + 1 < len(toks):
-                out.append(toks[i + 1])
+        for short_re in short_res:
+            sm = short_re.match(t)
+            if sm:
+                if sm.group(1):
+                    out.append(sm.group(1))
+                elif i + 1 < len(toks):
+                    out.append(toks[i + 1])
+                break
     return out
 
 

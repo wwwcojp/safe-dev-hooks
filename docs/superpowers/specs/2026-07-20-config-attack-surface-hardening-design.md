@@ -45,9 +45,13 @@
 | curl | `--output FILE` / `--output=FILE` | `curl --output .claude/settings.json URL` |
 | wget | `-O FILE`(密着 `-OFILE` を含む) | `wget -O .claude/settings.json URL` |
 | wget | `--output-document FILE` / `--output-document=FILE` | `wget --output-document=.mcp.json URL` |
+| wget | `-o FILE` / `--output-file=FILE`(ログ書込・上書き) | `wget -o .claude-hooks.json URL` |
+| wget | `-a FILE` / `--append-output=FILE`(ログ追記) | `wget -a .mcp.json URL` |
 
-- 短縮フラグは `^-[A-Za-z]*o(\S*)$`(curl)/ `^-[A-Za-z]*O(\S*)$`(wget)で照合する。固定幅アンカー・入れ子量化子なし(原則3、ReDoS安全)。キャプチャが空ならば次トークンを引数とみなす。
+- 短縮フラグは `^-[A-Za-z]*o(\S*)$`(curl)/ `^-[A-Za-z]*[Ooa](\S*)$`(wget)で照合する。固定幅アンカー・入れ子量化子なし(原則3、ReDoS安全)。キャプチャが空ならば次トークンを引数とみなす。
 - curl の `-O` はリモート名保存(引数なし)のため対象外。
+- wget の `-o`/`--output-file`(ログ書込)・`-a`/`--append-output`(ログ追記)も保護ファイルの改変経路として検査対象に含める(いずれも指定FILEへ書込または追記する)。
+- セグメント内に curl と wget が混在する場合(例: `curl URL | wget -O FILE -`)は、`_SEGMENT_RE` がパイプでは分割しないため両者が同一セグメントに現れる。この場合は一方のみでなく両方のツールのフラグ集合を適用して照合する。
 - 誤検知回避(原則2): 照合対象は出力フラグの引数のみ。URL・データ文字列・その他トークンは照合しない。したがって保護ファイル名を含むURLの読取(`curl https://…/.claude/settings.json`)、`/tmp` 等への保存、`wget -O -`(標準出力)は deny されない。
 
 ### #3 config_guard(ConfigChange 検知層)
