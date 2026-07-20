@@ -6,7 +6,7 @@
 
 ## 対象イベント / matcher
 
-- イベント: `PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `Stop`
+- イベント: `PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `Stop` / `ConfigChange`
 - matcher: `*`(全ツール対象)
 - `async: true`、timeout: 10秒(`hooks/hooks.json`)
 

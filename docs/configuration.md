@@ -92,6 +92,9 @@
     "enabled": true,
     "path": ".claude/logs"                   // 相対パスはcwd起点
   },
+  "config_guard": {
+    "enabled": true                          // セッション中の設定変更(ConfigChange)を通知。警告専用のためfalseで無効化可
+  },
   "notify": {
     "enabled": true,
     "method": "auto",                        // "auto"=デスクトップ通知の自動判別(不可ならベル) / "bell"=常にベル
@@ -100,7 +103,7 @@
 }
 ```
 
-各Hookの設定キーの詳細は個別のHookリファレンスも参照してください: [bash_guard](hooks/bash_guard.md) / [secrets_guard](hooks/secrets_guard.md) / [exfil_guard](hooks/exfil_guard.md) / [exfil_output_scan](hooks/exfil_output_scan.md) / [quality_gate](hooks/quality_gate.md) / [secrets_scan](hooks/secrets_scan.md) / [audit_log](hooks/audit_log.md) / [notify](hooks/notify.md)。
+各Hookの設定キーの詳細は個別のHookリファレンスも参照してください: [bash_guard](hooks/bash_guard.md) / [secrets_guard](hooks/secrets_guard.md) / [exfil_guard](hooks/exfil_guard.md) / [exfil_output_scan](hooks/exfil_output_scan.md) / [quality_gate](hooks/quality_gate.md) / [secrets_scan](hooks/secrets_scan.md) / [audit_log](hooks/audit_log.md) / [config_guard](hooks/config_guard.md) / [notify](hooks/notify.md)。
 
 ## 3. 設計原則
 

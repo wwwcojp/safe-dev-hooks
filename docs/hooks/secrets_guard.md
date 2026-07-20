@@ -33,10 +33,15 @@
 
 読取(`Read`)は許可したまま、この Hooks 集自身の設定・スクリプトファイルへの**改変**を deny する。
 
-- 対象(`rules/sensitive_paths.json` の `write_protected`): `.claude-hooks.json`, `claude-hooks.json`, `settings.json`, `settings.local.json`, `hooks.json`、およびこのインストール自身の `hooks/`/`rules/` ディレクトリ配下すべて(実パスを解決して判定)
+- 対象(`rules/sensitive_paths.json` の `write_protected`):
+  - `.claude-hooks.json` / `claude-hooks.json`(本Hooks集の設定ファイル。所在を問わない)
+  - `.mcp.json` / `.claude.json`(MCPサーバ定義・Claude Codeグローバル設定。MCPサーバの `command` は任意コマンド実行経路になるため。所在を問わない)
+  - `.claude/` 配下の `settings.json` / `settings.local.json`(裸の `settings.json` は対象外 — `.vscode/settings.json` 等の正当な編集を妨げない)
+  - このインストール自身の `hooks/`/`rules/` ディレクトリ配下すべて(実パスを解決して判定。`hooks/hooks.json` もこれに含まれる)
 - `.claude-hooks.json` の `secrets_guard.write_protected_paths` に追加したパターンもマージされる(解除は不可)
 - `Edit`/`Write` は `file_path` が対象に一致すれば deny。`Read` は対象外(閲覧は妨げない)
 - `Bash` はコマンド中に変異キーワード(`>`/`>>` によるリダイレクト。トークンに密着した `>file` を含む、`dd of=`、`rm`/`mv`/`cp`/`sed -i`/`tee`/`truncate`/`ln`/`install`)を含むセグメントのみを検査し、変異先のパス形式トークンが対象に一致すれば deny
+- `Bash` はさらに `curl`/`wget` の**出力フラグ**(`-o`(バンドル末尾・密着引数 `-oFILE` を含む)/ `--output`、wgetの `-O` / `--output-document`、`=` 連結形式を含む)の引数トークンも検査する。ダウンロードによる保護ファイルの上書き(例: 設定ファイルを外部から取得して置き換える操作)を塞ぐもので、出力フラグの引数のみを照合するため、URL等の無関係トークンや読取用途の `curl` を巻き込まない。wget の `-o`/`--output-file`(ログ書込)・`-a`/`--append-output`(ログ追記)も改変経路として検査対象であり、セグメント内に `curl` と `wget` が混在する場合は両方のフラグ集合を適用する
 
 ## 設定キー
 
@@ -52,6 +57,7 @@
 - **裸のファイル名(拡張子なし)は検知漏れになる(D13)**: Bashコマンドのトークン検査は「パス形式のトークン」のみを対象にしている。`grep credentials` や `find -name "*.pem"` のような検索コマンドまで解除不能denyにすると実用性を損なうためのトレードオフ。結果として、`cat credentials`(パス区切り・ドット・チルダを含まない裸のファイル名)のような直接アクセスは検査対象から外れ、**検知漏れとなる**。一方 `~/.aws/credentials` のようなパス形式であれば `_looks_like_path` に合致し捕捉される。
 - `Read`/`Edit`/`Write` の `file_path` は常に検査されるため、上記の限界は Bash 経由のアクセスにのみ適用される。
 - シンボリックリンクや `..` を用いたパストラバーサルで実体パスが変わっても、文字列としてのパターンマッチのみで判定するため、表記次第では見逃す・過検知する可能性がある。
-- **write_protectedはシェル変異キーワードが無いインタプリタ書き込みを検知できない**: Bash経由のwrite_protected検査は `>`/`dd of=`/`rm`/`mv`/`cp`/`sed -i`/`tee`/`truncate`/`ln`/`install` 等の既知の変異キーワードを含むセグメントのみを対象にしている。`python3 -c "open('.claude-hooks.json','w').write(...)"` のように、シェルレベルの変異キーワードを一切使わずインタプリタ内で直接ファイルへ書き込むコマンドは検査を素通りする。正規表現+機械判定できる範囲を確実に止めるというこのHooks集全体の設計方針([docs/security-model.md](../security-model.md) §3)の帰結であり、write_protectedも例外ではない。
+- **write_protectedはシェル変異キーワードが無いインタプリタ書き込みを検知できない**: Bash経由のwrite_protected検査は `>`/`dd of=`/`rm`/`mv`/`cp`/`sed -i`/`tee`/`truncate`/`ln`/`install` 等の既知の変異キーワード、および `curl`/`wget` の出力フラグを対象にしている。`python3 -c "open('.claude-hooks.json','w').write(...)"` のように、シェルレベルの変異キーワードを一切使わずインタプリタ内で直接ファイルへ書き込むコマンドは検査を素通りする。正規表現+機械判定できる範囲を確実に止めるというこのHooks集全体の設計方針([docs/security-model.md](../security-model.md) §3)の帰結であり、write_protectedも例外ではない(この経路の変更は [config_guard](config_guard.md) の検知層が補完する)。
+- **ダウンロード書込の検査は明示的な出力フラグのみが対象**: `curl -O URL`(リモート名で保存)や裸の `wget URL` のように、書込先ファイル名がURL側から決まる形式は、出力フラグの引数が存在しないため検査対象にならない。カレントディレクトリへサーバ由来の名前で書き込まれるこれらの形式で保護ファイルを狙い撃ちするにはURL側の細工が必要であり、明示的な出力フラグの検査で主要経路は塞がれていると判断した。
 - **enabled:false はdeny層(write_protectedを含む)を無効化しない**: `secrets_guard.enabled: false` を設定しても、保護パスの検査もwrite_protectedの検査も継続する。`systemMessage` でその旨を通知するのみで、動作は変わらない。deny層を止める唯一の正規手段はHookを `hooks/hooks.json` から除去すること、または Claude Code 本体の `disableAllHooks` である。
 - 判定不能時は fail-close(`ask`)。
