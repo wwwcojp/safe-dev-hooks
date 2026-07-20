@@ -33,6 +33,7 @@ DEFAULTS: dict = {
     "quality_gate": {"enabled": True, "mode": "block", "commands": {}},
     "secrets_scan": {"enabled": True, "custom_patterns": []},
     "audit_log": {"enabled": True, "path": ".claude/logs"},
+    "config_guard": {"enabled": True},
     "notify": {"enabled": True, "method": "auto", "command": None},
 }
 
