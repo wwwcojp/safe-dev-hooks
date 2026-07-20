@@ -56,6 +56,7 @@ def test_hooks_json_wires_all_events():
     h = _load("hooks/hooks.json")
     assert set(h["hooks"]) == {
         "PreToolUse", "PostToolUse", "SessionStart", "SessionEnd", "Stop", "Notification",
+        "ConfigChange",
     }
 
 

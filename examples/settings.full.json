@@ -58,6 +58,14 @@
     ],
     "Notification": [
       {"hooks": [{"type": "command", "command": "uv run \"$HOME/safe-dev-hooks/hooks/notification/notify.py\"", "timeout": 10}]}
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {"type": "command", "command": "uv run \"$HOME/safe-dev-hooks/hooks/config_change/config_guard.py\"", "timeout": 10},
+          {"type": "command", "command": "uv run \"$HOME/safe-dev-hooks/hooks/audit/audit_log.py\"", "timeout": 10, "async": true}
+        ]
+      }
     ]
   }
 }
