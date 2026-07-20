@@ -1,6 +1,6 @@
 {
   "name": "safe-dev-hooks",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Claude Codeで安全に開発するためのHooks集(破壊的コマンド遮断・機密保護・DLP・品質ゲート・監査)",
   "author": {"name": "wwwcojp"}
 }

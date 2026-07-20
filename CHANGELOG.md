@@ -2,6 +2,17 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.5.0] - 2026-07-20
+
+### Added
+
+- **`config_guard`(新Hook / `ConfigChange`)** — セッション中の設定ファイル変更(user/project/local/policy/skills)を `systemMessage` で通知し、変更後に `disableAllHooks: true` が有効な場合は追加警告する検知専用フック。write_protected(予防層)が見えない経路 — インタプリタレベルの書込・外部プロセス・人間の手による編集 — での設定変更を可視化する。ブロックはしない(`disableAllHooks` という正規の解除手段、および人間自身の設定編集を妨げないため。warn→block 段階導入の原則)。設定キー `config_guard.enabled`(警告専用のため `false` で完全無効化可)。`audit_log` も `ConfigChange` に配線し監査ログへ記録する。
+
+### Changed
+
+- **`secrets_guard`: write_protected に `.mcp.json`・`.claude.json` を追加** — MCPサーバ定義の `command` は任意コマンド実行経路であり、フック定義(`settings.json`)と同格の改変標的となるため(Claude Code のプロジェクト設定ファイル群を攻撃面とした CVE-2025-59536 / CVE-2026-21852 の教訓。`docs/best-practices.md` セクション6.2)。
+- **`secrets_guard`: `curl`/`wget` の出力フラグによる書込を write_protected の検査対象に追加** — `-o`(バンドル末尾 `-fsSLo`・密着引数 `-oFILE` を含む)/`--output`、wget の `-O`/`--output-document`(`=` 連結形式を含む)の引数トークンを保護対象と照合し、ダウンロードによる設定/フックファイルの上書きを deny する。wget の `-o`/`--output-file`(ログ書込)・`-a`/`--append-output`(ログ追記)も検査対象。セグメント内に curl/wget が混在する場合は両ツールのフラグ集合を適用。出力フラグの引数のみを照合するため、読取用途の `curl`(URL に保護ファイル名を含む場合など)や `/tmp` への保存は妨げない。`curl -O`・裸の `wget URL` のようにファイル名がURL側から決まる形式は対象外(既知の限界としてドキュメント化)。
+
 ## [0.4.0] - 2026-07-19
 
 ### Changed
