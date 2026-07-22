@@ -35,6 +35,11 @@ DEFAULTS: dict = {
     "audit_log": {"enabled": True, "path": ".claude/logs"},
     "config_guard": {"enabled": True},
     "notify": {"enabled": True, "method": "auto", "command": None},
+    "scanners": {
+        "gitleaks": "auto",
+        "gitleaks_image": "ghcr.io/gitleaks/gitleaks:v8.30.1",
+        "gitleaks_config": None,
+    },
 }
 
 _ENUM_KEYS = {
@@ -42,6 +47,7 @@ _ENUM_KEYS = {
     ("exfil_output_scan", "action"): {"warn", "redact"},
     ("quality_gate", "mode"): {"block", "warn"},
     ("notify", "method"): {"auto", "bell"},
+    ("scanners", "gitleaks"): {"auto", "off", "docker"},
 }
 _CATEGORY_ACTIONS = {"deny", "ask", "off"}
 
@@ -106,5 +112,15 @@ def load_config(cwd: str | None = None) -> dict:
         msg = "secrets_guard.write_protected_paths: 文字列リストでないため既定値を使用します"
         errors.append(msg)
         cfg["secrets_guard"]["write_protected_paths"] = []
+    sc = cfg.get("scanners", {})
+    if not isinstance(sc.get("gitleaks_image"), str):
+        errors.append("scanners.gitleaks_image: 文字列でないため既定値を使用します")
+        cfg["scanners"]["gitleaks_image"] = DEFAULTS["scanners"]["gitleaks_image"]
+    gc = sc.get("gitleaks_config")
+    if gc is not None and not isinstance(gc, str):
+        errors.append(
+            "scanners.gitleaks_config: 文字列またはnullでないため既定値を使用します"
+        )
+        cfg["scanners"]["gitleaks_config"] = None
     cfg["_errors"] = errors
     return cfg
