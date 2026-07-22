@@ -34,12 +34,18 @@
 
 いずれのルールにも一致しない場合。PII(メールアドレス等)はこのHookでは検査しない(PIIは `exfil_guard`/`exfil_output_scan` の担当領域)。
 
+### gitleaksとの関係(union加算)
+
+秘密検出は `hooks/lib/scanners.py` の `scan_secrets()` に集約されており、内蔵の `rules/secret_patterns.json`(上表のfloor)を常に無条件で先に走らせたうえで、`scanners.gitleaks` が任意に有効な場合のみgitleaksの検出結果を加算する(union)。既定は `"auto"`(`gitleaks` コマンドがPATH上に無ければ何もせず無コストでスキップ)であり、gitleaksが不在・タイムアウト・異常終了・JSON解析失敗のいずれであっても内蔵floorの判定は一切影響を受けない(fail-open)。`scanners.*` の全キーとDockerモードの注意点は [docs/configuration.md](../configuration.md) を参照。
+
 ## 設定キー
 
 | キー | 既定値 | 説明 |
 |---|---|---|
 | `secrets_scan.enabled` | `true` | falseで本Hookを無効化 |
 | `secrets_scan.custom_patterns` | `[]` | ビルトインへマージする追加ルール。`[{"name": "...", "regex": "..."}]` 形式(`exfil_guard.custom_patterns` と同形式)。プロジェクト固有の禁止文字列(実ホームパス・内部ホスト名等)の書き込みブロックに使う |
+
+`scanners.gitleaks`/`scanners.gitleaks_image`/`scanners.gitleaks_config` はこのHook固有の設定ではなく、`exfil_guard`/`exfil_output_scan` と共有するトップレベルの `scanners` セクションで指定する([docs/configuration.md](../configuration.md) 参照)。
 
 allowlist(検出除外)を設定するキーは無い。
 
