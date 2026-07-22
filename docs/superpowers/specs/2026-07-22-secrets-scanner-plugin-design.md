@@ -37,19 +37,20 @@
 秘密検出の集約点を1モジュールに新設する。3フックはこの関数を呼ぶだけにする。
 
 ```
-scanners.scan_secrets(text: str, cfg_all: dict, cwd: str | None) -> list[dict]
+scanners.scan_secrets(text: str, scanners_cfg: dict | None = None, cwd: str | None = None) -> list[dict]
     戻り値: [{"rule": str, "match": str}, ...]  (patterns.scan_text と同一契約)
 
     手順:
       1) builtin = patterns.scan_text(text, patterns.load_rules("secret_patterns.json"))
-      2) sc = cfg_all.get("scanners") or {}
+      2) sc = scanners_cfg or {}
          argv = _gitleaks_argv(sc, cwd)   # mode/実行形態/設定ファイルを解決。使えなければ None
          if argv is not None:
              builtin += _run_gitleaks(argv, text)   # 例外時は [] を足す(fail-open)
       3) (rule, match) タプルで重複排除して返す(初出順維持)
 ```
 
-- `scan_secrets` は `cwd`(`event.get("cwd")`)も受け取り、設定ファイル自動検出に用いる。
+- `scan_secrets` は `scanners`セクション(`cfg_all.get("scanners")`)を呼び出し側から受け取る。
+  `cwd`(`event.get("cwd")`)も受け取り、設定ファイル自動検出に用いる。
 - PII 側(`pii_patterns.json`)は本 spec のスコープ外。今回は一切変更しない。
 - `scan_secrets` 自身は例外を上位に投げない(内部で握って floor を返す)。ただし
   内蔵 `patterns.scan_text` の例外は既存どおり各フックの `fail_open` に委ねるため、
@@ -132,22 +133,24 @@ GITLEAKS_TIMEOUT_SEC = 15
 
 ## 3フックの変更(最小)
 
-いずれも「内蔵 secret スキャン呼び出し」を `scanners.scan_secrets(text, cfg_all, cwd)` に
-差し替えるだけ。PII・custom_patterns・confidential_markers 等の他カテゴリは不変。`cwd` は
-各フックが既に保持している `event.get("cwd")` を渡す(設定ファイル自動検出に使う)。
+いずれも「内蔵 secret スキャン呼び出し」を `scanners.scan_secrets(text, scanners_cfg, cwd)` に
+差し替えるだけ。呼び出し側が `cfg_all.get("scanners")` を渡す。PII・custom_patterns・
+confidential_markers 等の他カテゴリは不変。`cwd` は各フックが既に保持している
+`event.get("cwd")` を渡す(設定ファイル自動検出に使う)。
 
 - `hooks/pre_tool_use/exfil_guard.py` `evaluate()`:
   `add("credentials", patterns.scan_text(payload, load_rules("secret_patterns.json")))`
-  → `add("credentials", scanners.scan_secrets(payload, cfg_all, cwd))`
-  ※ `evaluate` は現在 `cfg`(exfil_guard セクション)のみ受け取るため、`cfg_all` と `cwd` を
-    渡せるようシグネチャを調整する(呼び出し元 `main` は両方を保持済み)。
+  → `add("credentials", scanners.scan_secrets(payload, scanners_cfg, cwd))`
+  ※ `evaluate` は現在 `cfg`(exfil_guard セクション)のみ受け取るため、`scanners_cfg` と `cwd` を
+    渡せるようシグネチャを調整する(呼び出し元 `main` が `cfg_all.get("scanners")` と cwd を渡す)。
 - `hooks/post_tool_use/secrets_scan.py` `main()`:
   内蔵 `load_rules("secret_patterns.json")` によるスキャン部分を
-  `scanners.scan_secrets(text, cfg_all, cwd)` に差し替え。`custom_patterns` は従来どおり
-  別途 `patterns.scan_text` で加算する(union にマージ)。
+  `scanners.scan_secrets(text, cfg_all.get("scanners"), cwd)` に差し替え。`custom_patterns` は
+  従来どおり別途 `patterns.scan_text` で加算する(union にマージ)。
 - `hooks/post_tool_use/exfil_output_scan.py` `evaluate()`:
-  secret 部分を `scanners.scan_secrets(text, cfg_all, cwd)` に差し替え、pii は据え置き。
-  `evaluate` に `cfg_all` と `cwd` を渡せるようシグネチャ調整。
+  secret 部分を `scanners.scan_secrets(text, scanners_cfg, cwd)` に差し替え、pii は据え置き。
+  `evaluate` に `scanners_cfg` と `cwd` を渡せるようシグネチャ調整(`main` が
+  `cfg_all.get("scanners")` と cwd を渡す)。
 
 ## 設定スキーマ(`hooks/lib/config.py`)
 
