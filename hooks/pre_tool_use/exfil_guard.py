@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import config, hook_io, patterns  # noqa: E402
+from lib import config, hook_io, patterns, scanners  # noqa: E402
 
 BUILTIN_TARGETS = ("WebFetch", "WebSearch")
 
@@ -26,7 +26,12 @@ def server_prefix(tool_name: str) -> str:
     return "__".join(parts[:2]) if len(parts) >= 2 else tool_name
 
 
-def evaluate(payload_text: str, cfg: dict) -> dict | None:
+def evaluate(
+    payload_text: str,
+    cfg: dict,
+    scanners_cfg: dict | None = None,
+    cwd: str | None = None,
+) -> dict | None:
     cats = cfg.get("categories", {})
     findings: list[dict] = []
 
@@ -39,7 +44,7 @@ def evaluate(payload_text: str, cfg: dict) -> dict | None:
 
     add(
         "credentials",
-        patterns.scan_text(payload_text, patterns.load_rules("secret_patterns.json")),
+        scanners.scan_secrets(payload_text, scanners_cfg, cwd),
     )
     add(
         "pii",
@@ -108,7 +113,7 @@ def main() -> None:
     payload_text = json.dumps(event.get("tool_input") or {}, ensure_ascii=False)
     try:
         if cfg.get("mode") == "always":
-            verdict = evaluate(payload_text, cfg)
+            verdict = evaluate(payload_text, cfg, cfg_all.get("scanners"), event.get("cwd"))
             if verdict is None or verdict["decision"] != "deny":  # denyは降格させない
                 verdict = {
                     "decision": "ask",
@@ -118,7 +123,7 @@ def main() -> None:
                     ),
                 }
         else:
-            verdict = evaluate(payload_text, cfg)
+            verdict = evaluate(payload_text, cfg, cfg_all.get("scanners"), event.get("cwd"))
             if verdict is None and cfg.get("categories", {}).get("semantic", "ask") != "off":
                 s = semantic_check(payload_text, cfg)
                 if s:
