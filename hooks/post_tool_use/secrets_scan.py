@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import config, hook_io, patterns  # noqa: E402
+from lib import config, hook_io, patterns, scanners  # noqa: E402
 
 WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
 CONTENT_KEYS = ("content", "new_string", "new_source")
@@ -27,11 +27,13 @@ def main() -> None:
         hook_io.finalize(None, cfg_all)
     text = extract_written_text(event.get("tool_input") or {})
     try:
-        rules = list(patterns.load_rules("secret_patterns.json")) + [
+        custom_rules = [
             {"name": p["name"], "regex": p["regex"]}
             for p in cfg.get("custom_patterns", [])
         ]
-        findings = patterns.scan_text(text, rules)
+        findings = scanners.scan_secrets(
+            text, cfg_all.get("scanners"), event.get("cwd")
+        ) + patterns.scan_text(text, custom_rules)
     except Exception as exc:
         hook_io.fail_open("secrets_scan", exc)
         return
