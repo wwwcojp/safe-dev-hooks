@@ -104,7 +104,7 @@ wheels = [
 
 [[package]]
 name = "safe-dev-hooks"
-version = "0.4.0"
+version = "0.6.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
