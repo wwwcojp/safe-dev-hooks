@@ -198,4 +198,4 @@
 
 `exfil_output_scan.action: "redact"` は `tool_output`/`tool_response` が文字列型の応答にのみ有効([docs/hooks/exfil_output_scan.md](hooks/exfil_output_scan.md) の既知の限界を参照)。
 
-`scanners.gitleaks: "docker"` は内蔵patternsの検出漏れを補う任意のunion加算であり、明示opt-inのため既定は `"auto"` のままでよい。ローカルに `gitleaks` バイナリを常設できない環境で、`exfil_guard`(timeout 60秒)経由の検出強化だけを狙う場合に有効。`docker`モードの前提・タイムアウト上の注意は[## 2. 全スキーマ](#2-全スキーマ)の `scanners` の項を参照。
+`scanners.gitleaks: "docker"` は内蔵patternsの検出漏れを補う任意のunion加算であり、明示opt-inのため既定は `"auto"` のままでよい。ローカルに `gitleaks` バイナリを常設できない環境で、`exfil_guard`(timeout 60秒)経由の検出強化だけを狙う場合に有効。`docker`モードの前提・タイムアウト上の注意は[2. 全スキーマ](#2-全スキーマ)の `scanners` の項を参照。

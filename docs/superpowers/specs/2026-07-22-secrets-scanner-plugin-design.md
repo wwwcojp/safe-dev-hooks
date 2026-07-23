@@ -83,7 +83,7 @@ mode == "docker":
      base += ["-v", f"{abspath(cfg_path)}:/tmp/gl.toml:ro"]
      tail  = ["-c", "/tmp/gl.toml"]
   else: tail = []
-  -> [*base, image, *共通フラグ, *tail]
+  -> [*base, "--", image, *共通フラグ, *tail]
 ```
 
 - **"auto" は docker へフォールバックしない。** `auto` は `which("gitleaks")` の軽量チェック

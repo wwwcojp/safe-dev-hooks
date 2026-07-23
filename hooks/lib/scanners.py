@@ -51,7 +51,7 @@ def _gitleaks_argv(sc: dict, cwd: str | None) -> list | None:
         if cfg_path:
             argv += ["-v", f"{os.path.abspath(cfg_path)}:/tmp/gl.toml:ro"]
             tail = ["-c", "/tmp/gl.toml"]
-        argv += [image, *_COMMON_FLAGS, *tail]
+        argv += ["--", image, *_COMMON_FLAGS, *tail]
         return argv
     return None
 

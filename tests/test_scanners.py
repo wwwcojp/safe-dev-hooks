@@ -34,6 +34,15 @@ def test_argv_docker_absent(monkeypatch):
     assert scanners._gitleaks_argv({"gitleaks": "docker"}, None) is None
 
 
+def test_argv_docker_flag_shaped_image_separated(monkeypatch):
+    monkeypatch.setattr(scanners.shutil, "which",
+                        lambda n, *a, **k: "/usr/bin/docker" if n == "docker" else None)
+    argv = scanners._gitleaks_argv(
+        {"gitleaks": "docker", "gitleaks_image": "--privileged"}, None)
+    assert "--" in argv
+    assert argv[argv.index("--") + 1] == "--privileged"
+
+
 def test_argv_explicit_config(monkeypatch, tmp_path):
     monkeypatch.setattr(scanners.shutil, "which",
                         lambda n, *a, **k: "/x" if n == "gitleaks" else None)
