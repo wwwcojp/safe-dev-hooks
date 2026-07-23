@@ -36,3 +36,16 @@ def test_redact_falls_back_to_warn_for_non_string(capsys):
 
 def test_clean_output_returns_no_findings():
     assert scan.evaluate("普通の応答です", CFG_WARN) == []
+
+
+def test_gitleaks_finding_redacted(monkeypatch):
+    monkeypatch.setattr(
+        scan.scanners, "scan_secrets",
+        lambda text, sc, cwd: [{"rule": "gitleaks:x", "match": "STUBSECRET"}],
+    )
+    raw = "leak=STUBSECRET end"
+    findings = scan.evaluate(raw, CFG_REDACT, {"gitleaks": "auto"}, None)
+    out = scan.build_output(findings, raw, CFG_REDACT)
+    updated = out["hookSpecificOutput"]["updatedToolOutput"]
+    assert "STUBSECRET" not in updated
+    assert "[REDACTED:gitleaks:x]" in updated

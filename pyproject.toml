@@ -1,6 +1,6 @@
 [project]
 name = "safe-dev-hooks"
-version = "0.5.0"
+version = "0.6.0"
 description = "Claude Codeで安全に開発するためのHooks集"
 requires-python = ">=3.10"
 

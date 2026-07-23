@@ -16,10 +16,12 @@ MCPツール・`WebFetch`・`WebSearch` の**応答**に含まれるシークレ
 
 `rules/secret_patterns.json`(`aws-access-key`, `github-token`, `github-fine-grained-token`, `slack-token`, `anthropic-api-key`, `private-key-block`, `generic-credential`)と `rules/pii_patterns.json`(`email`, `jp-phone`, `credit-card`, `my-number`)の全ルールを応答テキストに適用する。`exfil_guard` と異なり、`confidential_markers` と `custom_patterns` はここでは検査対象外(応答からの流入検知はシークレット・PIIのみ)。
 
+シークレット検出は `hooks/lib/scanners.py` の `scan_secrets()` に集約されており、`rules/secret_patterns.json`(floor)を常に無条件で先に走らせたうえで、`scanners.gitleaks` が任意に有効な場合のみgitleaksの検出結果を加算する(union)。既定は `"auto"`(gitleaks不在なら無コストでスキップ)であり、gitleaksの不在・失敗は検出結果に影響しない(fail-open)だけで、floor自体の検出は継続する。`scanners.*` の設定は [docs/configuration.md](../configuration.md) を参照。
+
 検出が1件でもあれば `exfil_output_scan.action` に応じて以下いずれかを返す:
 
 - **`warn`(既定)**: `hookSpecificOutput.additionalContext` に検出ルール名を含む注意文を追加(ツール応答自体は変更しない)
-- **`redact`**: 検出した各マッチ文字列を `[REDACTED:<ルール名>]` に置換した応答を `hookSpecificOutput.updatedToolOutput` として返す。**ただし `tool_output`/`tool_response` が文字列型の場合のみ**マスキングが行われる。文字列でない(オブジェクト等の)応答の場合は `redact` を設定していても `warn` と同じ注意文のみが返る([既知の限界](#既知の限界)参照)。
+- **`redact`**: 検出した各マッチ文字列を `[REDACTED:<ルール名>]` に置換した応答を `hookSpecificOutput.updatedToolOutput` として返す。**ただし `tool_output`/`tool_response` が文字列型の場合のみ**マスキングが行われる。文字列でない(オブジェクト等の)応答の場合は `redact` を設定していても `warn` と同じ注意文のみが返る([既知の限界](#既知の限界)参照)。gitleaksの検出結果もルール名 `gitleaks:<RuleID>` ・マッチ文字列(gitleaksの `Secret` フィールド)を持つ通常のfindingとして扱われるため、`action: "redact"` によるマスキング対象に等しく含まれる。
 
 検出が無ければ何も出力しない。
 

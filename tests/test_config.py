@@ -115,3 +115,40 @@ def test_write_protected_paths_invalid_type_falls_back(tmp_path, monkeypatch):
     cfg = config.load_config(str(tmp_path))
     assert cfg["secrets_guard"]["write_protected_paths"] == []
     assert any("write_protected_paths" in e for e in cfg["_errors"])
+
+
+def test_scanners_defaults(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["scanners"]["gitleaks"] == "auto"
+    assert cfg["scanners"]["gitleaks_image"].startswith("ghcr.io/gitleaks/gitleaks:")
+    assert cfg["scanners"]["gitleaks_config"] is None
+
+
+def test_scanners_gitleaks_enum_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"scanners": {"gitleaks": "bogus"}}', encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["scanners"]["gitleaks"] == "auto"
+    assert any("scanners.gitleaks" in e for e in cfg["_errors"])
+
+
+def test_scanners_gitleaks_docker_accepted(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"scanners": {"gitleaks": "docker"}}', encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["scanners"]["gitleaks"] == "docker"
+
+
+def test_scanners_config_type_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"scanners": {"gitleaks_config": 123}}', encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["scanners"]["gitleaks_config"] is None
+    assert any("gitleaks_config" in e for e in cfg["_errors"])

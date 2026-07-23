@@ -2,6 +2,15 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.6.0] - 2026-07-23
+
+### Added
+- 秘密検出の任意バックエンドとして gitleaks 委譲を追加(`scanners.gitleaks`: `auto`/`off`/`docker`)。内蔵 patterns を floor として残す union(加算)方式で、deny 保証を弱めずカバレッジを拡張。
+- `scanners.gitleaks_image`(Docker イメージ)・`scanners.gitleaks_config`(`.gitleaks.toml` 指定、未指定時は `<cwd>/.gitleaks.toml` 自動)を追加。
+
+### Changed
+- `exfil_guard`/`secrets_scan`/`exfil_output_scan` の秘密検出を共有集約点 `scanners.scan_secrets` 経由に変更(内蔵挙動は不変・gitleaks 不在時は従来同等)。
+
 ## [0.5.0] - 2026-07-20
 
 ### Added

@@ -70,6 +70,15 @@ def test_clean_payload_passes():
     assert exfil_guard.evaluate("普通の検索クエリ python asyncio", _cfg()) is None
 
 
+def test_gitleaks_finding_denies(monkeypatch):
+    monkeypatch.setattr(
+        exfil_guard.scanners, "scan_secrets",
+        lambda text, sc, cwd: [{"rule": "gitleaks:x", "match": "STUB"}],
+    )
+    v = exfil_guard.evaluate("clean text", _cfg(), {"gitleaks": "auto"}, None)
+    assert v["decision"] == "deny"
+
+
 def _run_main(monkeypatch, event, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
     with pytest.raises(SystemExit):

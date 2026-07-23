@@ -108,3 +108,19 @@ def test_invalid_custom_pattern_fails_open(monkeypatch, tmp_path, capsys):
     out = _run_main(monkeypatch, event, capsys)
     assert "decision" not in (out or {})
     assert "secrets_scan" in out["systemMessage"]
+
+
+def test_gitleaks_finding_in_block(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(
+        scan.scanners, "scan_secrets",
+        lambda text, sc, cwd: [{"rule": "gitleaks:generic", "match": "STUB"}],
+    )
+    event = {
+        "tool_name": "Write",
+        "cwd": str(tmp_path),
+        "tool_input": {"file_path": "a.py", "content": "hello world"},
+    }
+    out = _run_main(monkeypatch, event, capsys)
+    assert out["decision"] == "block"
+    assert "gitleaks:generic" in out["reason"]

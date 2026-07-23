@@ -30,7 +30,7 @@
 
 - **型不一致**(セクションの型が既定と違う)→ そのセクションを既定へ。
 - **JSON構文エラー / オブジェクトでない設定ファイル** → そのファイルを無視。
-- **列挙値のタイポ** → 該当キーのみ既定へ。対象は `exfil_guard.mode`・`exfil_output_scan.action`・`quality_gate.mode`、および `exfil_guard.categories` の各値(`deny`/`ask`/`off`)。既定に無い未知のカテゴリキーは削除する。
+- **列挙値のタイポ** → 該当キーのみ既定へ。対象は `exfil_guard.mode`・`exfil_output_scan.action`・`quality_gate.mode`・`scanners.gitleaks`、および `exfil_guard.categories` の各値(`deny`/`ask`/`off`)。既定に無い未知のカテゴリキーは削除する。
 
 いずれも `_errors` に1件ずつ記録され、Hook出力に `[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: ...` が付く。
 
@@ -99,11 +99,30 @@
     "enabled": true,
     "method": "auto",                        // "auto"=デスクトップ通知の自動判別(不可ならベル) / "bell"=常にベル
     "command": null                          // 設定時はmethodより優先。{message} 置換で実行
+  },
+  "scanners": {
+    "gitleaks": "auto",                      // "auto"=PATH上に`gitleaks`があれば内蔵patternsに加算(無ければ無コストでスキップ)
+                                              // "off"=内蔵patternsのみ / "docker"=`docker run`経由で明示opt-in
+    "gitleaks_image": "ghcr.io/gitleaks/gitleaks:v8.30.1",
+                                              // "docker"モードで使うイメージ(既定は固定タグ)
+    "gitleaks_config": null                  // gitleaksの`-c`に渡す.gitleaks.tomlパス。未指定時は<cwd>/.gitleaks.tomlが
+                                              // 存在すれば自動採用、無ければgitleaks既定設定で実行する
   }
+  // 注: scanners.gitleaksは secrets_scan/exfil_guard/exfil_output_scan が共有する秘密検出バックエンドの設定である
+  // (`hooks/lib/scanners.py` の scan_secrets)。内蔵patterns(rules/secret_patterns.json)は常に無条件で走るfloorであり、
+  // gitleaksの検出結果はその上にunion加算されるだけで置き換えない(不在・失敗時もfloorは不変=credentials=denyの保証は
+  // 弱まらない)。gitleaks呼び出し自体はタイムアウト(15秒)・プロセス起動失敗・非0/1終了・JSON解析失敗のいずれでも
+  // 例外を出さずfail-open(その回の加算だけ無し、floor自体は継続)する。
+  // "docker"モードは`docker run`の起動コストが掛かるため、secrets_scan(10秒)・exfil_output_scan(15秒)の短い
+  // timeoutでは予算超過し得る。有効化するなら60秒timeoutを持つexfil_guardでの利用を基本にする。また
+  // `DOCKER_HOST`がリモートdaemonを指す環境では、`docker run`実行時に検査対象ペイロード(stdin経由)がその
+  // リモートホストへ送信され得る点に注意(既定はローカルdaemon前提)。
 }
 ```
 
 各Hookの設定キーの詳細は個別のHookリファレンスも参照してください: [bash_guard](hooks/bash_guard.md) / [secrets_guard](hooks/secrets_guard.md) / [exfil_guard](hooks/exfil_guard.md) / [exfil_output_scan](hooks/exfil_output_scan.md) / [quality_gate](hooks/quality_gate.md) / [secrets_scan](hooks/secrets_scan.md) / [audit_log](hooks/audit_log.md) / [config_guard](hooks/config_guard.md) / [notify](hooks/notify.md)。
+
+`scanners.*` はどのHook個別のセクションにも属さない共有設定であり、`secrets_scan`/`exfil_guard`(`categories.credentials`)/`exfil_output_scan` の3Hookが `scan_secrets()` 経由で共通して参照する。
 
 ## 3. 設計原則
 
@@ -170,8 +189,13 @@
   "secrets_guard": {
     "protected_paths": ["config/secrets/**", "**/*.credentials"],
     "write_protected_paths": ["deploy/*.lock", "infra/**/*.tfstate"]
+  },
+  "scanners": {
+    "gitleaks": "docker"
   }
 }
 ```
 
 `exfil_output_scan.action: "redact"` は `tool_output`/`tool_response` が文字列型の応答にのみ有効([docs/hooks/exfil_output_scan.md](hooks/exfil_output_scan.md) の既知の限界を参照)。
+
+`scanners.gitleaks: "docker"` は内蔵patternsの検出漏れを補う任意のunion加算であり、明示opt-inのため既定は `"auto"` のままでよい。ローカルに `gitleaks` バイナリを常設できない環境で、`exfil_guard`(timeout 60秒)経由の検出強化だけを狙う場合に有効。`docker`モードの前提・タイムアウト上の注意は[2. 全スキーマ](#2-全スキーマ)の `scanners` の項を参照。

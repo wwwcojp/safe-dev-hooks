@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import config, hook_io, patterns  # noqa: E402
+from lib import config, hook_io, patterns, scanners  # noqa: E402
 
 BUILTIN_TARGETS = ("WebFetch", "WebSearch")
 
@@ -17,11 +17,11 @@ def is_target(tool_name: str) -> bool:
     return tool_name.startswith("mcp__") or tool_name in BUILTIN_TARGETS
 
 
-def evaluate(output_text: str, cfg: dict) -> list:
-    rules = list(patterns.load_rules("secret_patterns.json")) + list(
-        patterns.load_rules("pii_patterns.json")
-    )
-    return patterns.scan_text(output_text, rules)
+def evaluate(output_text: str, cfg: dict, scanners_cfg: dict | None = None,
+             cwd: str | None = None) -> list:
+    secrets = scanners.scan_secrets(output_text, scanners_cfg, cwd)
+    pii = patterns.scan_text(output_text, patterns.load_rules("pii_patterns.json"))
+    return secrets + pii
 
 
 def build_output(findings: list, raw_output, cfg: dict) -> dict | None:
@@ -61,7 +61,7 @@ def main() -> None:
     raw = event.get("tool_output", event.get("tool_response", ""))
     text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
     try:
-        findings = evaluate(text, cfg)
+        findings = evaluate(text, cfg, cfg_all.get("scanners"), event.get("cwd"))
         out = build_output(findings, raw, cfg)
     except Exception as exc:
         hook_io.fail_open("exfil_output_scan", exc)

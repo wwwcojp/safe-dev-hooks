@@ -20,13 +20,15 @@
 
 | カテゴリ | 検出内容 | 既定アクション | ルール定義 |
 |---|---|---|---|
-| `credentials` | AWSキー・GitHubトークン・Slackトークン・Anthropic APIキー・秘密鍵ブロック・`key=`/`token=`等の汎用形式 | `deny` | `rules/secret_patterns.json`: `aws-access-key`, `github-token`, `github-fine-grained-token`, `slack-token`, `anthropic-api-key`, `private-key-block`, `generic-credential` |
+| `credentials` | AWSキー・GitHubトークン・Slackトークン・Anthropic APIキー・秘密鍵ブロック・`key=`/`token=`等の汎用形式(+ 任意でgitleaksの検出結果) | `deny` | `rules/secret_patterns.json`: `aws-access-key`, `github-token`, `github-fine-grained-token`, `slack-token`, `anthropic-api-key`, `private-key-block`, `generic-credential` |
 | `pii` | メールアドレス・日本の電話番号・クレジットカード番号(Luhn検証)・マイナンバー(チェックデジット検証) | `ask` | `rules/pii_patterns.json`: `email`, `jp-phone`, `credit-card`, `my-number` |
 | `confidential_markers` | 「社外秘」「部外秘」「極秘」「取扱注意」「マル秘」「㊙」「confidential」「internal only」等の文字列(大文字小文字を無視) | `ask` | `rules/confidential_markers.json` |
 | `custom` | 組織固有の正規表現(社内ドメイン・コードネーム・顧客ID形式等) | `ask` | `.claude-hooks.json` の `exfil_guard.custom_patterns` |
 | `semantic` | 機密マーカーが無くても機微と思われる情報(人事・給与・顧客情報・未公開の事業情報等)をヘッドレスClaude(`claude -p`)で判定 | `ask` 専用 | `rules/semantic_prompt.md` |
 
 各カテゴリのアクションは `.claude-hooks.json` の `exfil_guard.categories` で `deny`/`ask`/`off` に上書きできる(`semantic` は `ask`/`off` のみ)。複数カテゴリが検出された場合、いずれかが `deny` なら全体判定は `deny`、そうでなければ `ask`。
+
+`credentials` カテゴリの検出は `hooks/lib/scanners.py` の `scan_secrets()` に集約されており、内蔵の `rules/secret_patterns.json`(floor)を常に無条件で先に走らせたうえで、`scanners.gitleaks` が任意に有効な場合のみgitleaksの検出結果を加算する(union)。既定は `"auto"`(gitleaks不在なら無コストでスキップ)であり、gitleaksの不在・失敗はfloorの `deny` 判定に一切影響しない(fail-open)。`scanners.*` の設定は [docs/configuration.md](../configuration.md) を参照。
 
 ### 動作モード(`exfil_guard.mode`)
 
