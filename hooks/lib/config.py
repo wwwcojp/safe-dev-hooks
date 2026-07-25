@@ -63,15 +63,32 @@ def _merge(base: dict, override: dict) -> dict:
 
 
 def load_config(cwd: str | None = None) -> dict:
+    """設定を読み込む。この関数は例外を送出しない。
+
+    設定ファイルはリポジトリ由来の信頼できない入力であり、ここで例外が漏れると
+    Hookが判定前に異常終了して deny 層ごと素通りする。どんな異常でもビルトイン
+    既定値へフォールバックし、`_errors` に記録して可視化する(fail-safe)。
+    """
+    try:
+        return _load_config(cwd)
+    except Exception as exc:  # 想定外の異常でもガードを死なせない
+        cfg = copy.deepcopy(DEFAULTS)
+        cfg["_errors"] = [f"設定の読み込みに失敗したため既定値を使用します: {exc}"]
+        return cfg
+
+
+def _load_config(cwd: str | None = None) -> dict:
     cfg = copy.deepcopy(DEFAULTS)
     errors: list[str] = []
     paths = [GLOBAL_CONFIG_PATH, Path(cwd or ".") / PROJECT_CONFIG_NAME]
     for path in paths:
-        if not path.is_file():
-            continue
         try:
+            if not path.is_file():
+                continue
+            # 不正UTF-8は UnicodeDecodeError(ValueError)、JSON構文エラーは
+            # JSONDecodeError(ValueError)、深いネストは RecursionError を送出する
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             errors.append(f"{path}: {exc}")
             continue
         if not isinstance(data, dict):
@@ -89,7 +106,11 @@ def load_config(cwd: str | None = None) -> dict:
                 f"{section}.{sub_key}: 未知の値 {value!r} のため既定値を使用します"
             )
             cfg[section][sub_key] = DEFAULTS[section][sub_key]
-    categories = cfg.get("exfil_guard", {}).get("categories", {})
+    categories = cfg.get("exfil_guard", {}).get("categories")
+    if not isinstance(categories, dict):
+        errors.append("exfil_guard.categories: オブジェクトでないため既定値を使用します")
+        categories = copy.deepcopy(DEFAULTS["exfil_guard"]["categories"])
+        cfg["exfil_guard"]["categories"] = categories
     for cat_key, cat_value in list(categories.items()):
         if cat_value not in _CATEGORY_ACTIONS:
             errors.append(

@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from hooks.lib import config
@@ -254,3 +256,106 @@ def test_scanners_gitleaks_image_type_fallback(monkeypatch, tmp_path):
     assert cfg["_errors"] == [
         "scanners.gitleaks_image: 文字列でないため既定値を使用します"
     ]
+
+
+def test_invalid_utf8_config_records_error_and_keeps_defaults(monkeypatch, tmp_path):
+    """不正UTF-8の設定ファイルでも例外を出さず既定値で継続する。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_bytes(b"\xff{}")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["enabled"] is True
+    assert cfg["secrets_guard"]["enabled"] is True
+    assert cfg["exfil_guard"]["mode"] == "detect"
+    assert len(cfg["_errors"]) == 1
+
+
+def test_invalid_utf8_global_config_records_error_and_keeps_defaults(monkeypatch, tmp_path):
+    """グローバル設定側が不正UTF-8でも同様(読込は2層とも同じ経路)。"""
+    g = tmp_path / "global.json"
+    g.write_bytes(b"\xff{}")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", g)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    cfg = config.load_config(str(proj))
+    assert cfg["bash_guard"]["enabled"] is True
+    assert len(cfg["_errors"]) == 1
+
+
+def test_deeply_nested_json_records_error_and_keeps_defaults(monkeypatch, tmp_path):
+    """再帰上限を超える深いネスト(RecursionError)でも例外を出さず既定値で継続する。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    depth = 200_000
+    (tmp_path / ".claude-hooks.json").write_text("[" * depth + "]" * depth, encoding="utf-8")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["enabled"] is True
+    assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
+    assert len(cfg["_errors"]) == 1
+
+
+def test_non_dict_categories_falls_back_to_defaults(monkeypatch, tmp_path):
+    """exfil_guard.categories がオブジェクトでない場合も落ちずに既定値へ倒す。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    for bad in ([], None, "x", 3):
+        (tmp_path / ".claude-hooks.json").write_text(
+            json.dumps({"exfil_guard": {"categories": bad}}), encoding="utf-8"
+        )
+        cfg = config.load_config(str(tmp_path))
+        assert cfg["exfil_guard"]["categories"] == config.DEFAULTS["exfil_guard"]["categories"], bad
+        assert any("categories" in e for e in cfg["_errors"]), bad
+
+
+def test_load_config_never_raises_on_unexpected_error(monkeypatch, tmp_path):
+    """想定外の内部エラーでもガードを死なせず既定値へフォールバックする。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
+    )
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("想定外")
+
+    monkeypatch.setattr(config, "_merge", boom)
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["notify"]["method"] == "auto"
+    assert cfg["bash_guard"]["enabled"] is True
+    assert len(cfg["_errors"]) == 1
+
+
+def test_valid_config_still_applies(monkeypatch, tmp_path):
+    """正常な設定(categories上書き・マルチバイト文字)は従来どおり反映され警告も出ない。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps(
+            {
+                "exfil_guard": {"categories": {"pii": "deny", "semantic": "off"}},
+                "notify": {"command": "notify-send 通知"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["exfil_guard"]["categories"]["pii"] == "deny"
+    assert cfg["exfil_guard"]["categories"]["semantic"] == "off"
+    # 未指定のカテゴリは既定値が残る
+    assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
+    assert cfg["notify"]["command"] == "notify-send 通知"
+    assert cfg["_errors"] == []
+
+
+def test_malformed_config_does_not_disable_deny_layer(tmp_path):
+    """不正UTF-8の設定ファイルがあっても bash_guard の deny 層は動く(黒箱)。"""
+    (tmp_path / ".claude-hooks.json").write_bytes(b"\xff{}")
+    script = Path(__file__).resolve().parent.parent / "hooks" / "pre_tool_use" / "bash_guard.py"
+    event = {
+        "tool_name": "Bash",
+        "cwd": str(tmp_path),
+        "tool_input": {"command": "mkfs.ext4 /dev/sda1"},
+    }
+    r = subprocess.run(
+        [sys.executable, str(script)], input=json.dumps(event),
+        capture_output=True, text=True, timeout=30,
+    )
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
