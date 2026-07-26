@@ -6,6 +6,8 @@
 
 ### Fixed
 - `secrets_guard` の write_protected 照合を「表記」でなく「イベントの `cwd` 基準で正規化した絶対パス」に対して行うよう修正。Bash の相対トークン(`echo x > .loop/state.json` 等)が `*/.loop/state.json` のようなパススコープ付きパターンを素通りしていた穴を塞ぐ(`~` 展開・`./`・`../` も同様。シンボリックリンクと `cd` またぎは追跡しない)。ビルトイン `rules/sensitive_paths.json` の相対表記の重複エントリ(`.claude/settings.json` / `.claude/settings.local.json`)は正規化で包含されるため削除。
+- **`load_config` が例外を送出しなくなった(ガードの fail-open を防止)** — 不正UTF-8バイト列(`UnicodeDecodeError`)、再帰上限を超える深いネスト(`RecursionError`)、非dictの `exfil_guard.categories`(`AttributeError`)が捕捉漏れとなり、各Hookが判定前に異常終了していた。終了コードが2でないためツール実行は継続され、`bash_guard`/`secrets_guard` の deny 層と `config_guard` の通知がリポジトリ同梱の設定ファイル1つで無効化できる状態だった。読み込みの捕捉範囲を拡張し、`load_config` 全体を「例外を外に出さない」設計へ変更(異常時はビルトイン既定値 + `_errors`)。
+- **設定の型不正時のフォールバック先を「直下の層」へ修正** — 従来は不正値をビルトイン既定値へ戻していたため、プロジェクト設定が `{"exfil_guard": 0}` のような型のすり替えを行うと、利用者が**グローバル設定で行った強化**(`mode: "always"`・`categories.pii: "deny"`・`protected_branches` 等)まで既定値へ戻せてしまった。検証を層ごとにマージ直後へ挟み、上位層の不正値は「その層をマージする前の状態」へ縮退させる。グローバル層自体の不正値がビルトイン既定へ戻る挙動は従来どおり。
 
 ## [0.6.0] - 2026-07-23
 

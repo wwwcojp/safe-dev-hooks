@@ -26,13 +26,23 @@
 
 ### 設定エラー時の挙動(常に安全側)
 
-不正な設定は無視され、該当箇所だけビルトイン既定値へフォールバックしたうえで `systemMessage` で警告する(検査自体は止めない)。
+不正な設定は無視され、該当箇所だけ**直下の層の値**へフォールバックしたうえで `systemMessage` で警告する(検査自体は止めない)。
 
-- **型不一致**(セクションの型が既定と違う)→ そのセクションを既定へ。
+**縮退先は「直下の層」であって最下層ではない。** 層構造の意味は「上位が下位を上書きする」であり、上位層が壊れた値を持ち込んだときは、その層をマージする前の状態を保つ。検証は層ごとにマージ直後へ挟まれる。
+
+| 不正値のある層 | 縮退先 |
+|---|---|
+| プロジェクト(`.claude-hooks.json`) | グローバル設定を適用した後の状態 |
+| グローバル(`~/.claude/claude-hooks.json`) | ビルトイン既定値 |
+
+したがって、プロジェクト設定が `{"exfil_guard": 0}` のような型のすり替えを行っても、**利用者がグローバル設定で行った強化(`mode: "always"`、`categories.pii: "deny"` 等)は失われない**。最下層へ戻す実装では、プロジェクト設定から中間層の強化を消せてしまう。
+
+- **型不一致**(セクションの型が既定と違う)→ そのセクションを直下の層へ。
 - **JSON構文エラー / オブジェクトでない設定ファイル** → そのファイルを無視。
 - **読み込み不能な設定ファイル**(不正なUTF-8バイト列、再帰上限を超える深いネスト、読取エラー)→ そのファイルを無視。
-- **列挙値のタイポ** → 該当キーのみ既定へ。対象は `exfil_guard.mode`・`exfil_output_scan.action`・`quality_gate.mode`・`scanners.gitleaks`、および `exfil_guard.categories` の各値(`deny`/`ask`/`off`)。既定に無い未知のカテゴリキーは削除する。
-- **`exfil_guard.categories` がオブジェクトでない** → `categories` 全体を既定へ。
+- **列挙値のタイポ** → 該当キーのみ直下の層へ。対象は `exfil_guard.mode`・`exfil_output_scan.action`・`quality_gate.mode`・`scanners.gitleaks`・`notify.method`、および `exfil_guard.categories` の各値(`deny`/`ask`/`off`)。直下の層にも存在しない未知のカテゴリキーは削除する。
+- **`exfil_guard.categories` がオブジェクトでない** → `categories` 全体を直下の層へ。
+- **文字列リストでない値**(`bash_guard.protected_branches`・`secrets_guard.write_protected_paths`)、**`scanners.gitleaks_image` / `gitleaks_config` の型不正** → 該当キーのみ直下の層へ。
 
 いずれも `_errors` に1件ずつ記録され、Hook出力に `[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: ...` が付く。設定の読み込み(`load_config`)は例外を送出しない設計で、どんな設定ファイルでもHookが判定前に異常終了することはない(deny層が設定ファイル起因で素通りしない)。
 

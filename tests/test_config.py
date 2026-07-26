@@ -359,3 +359,106 @@ def test_malformed_config_does_not_disable_deny_layer(tmp_path):
     assert r.returncode == 0
     out = json.loads(r.stdout)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+# --- 層の縮退先(spec #5): 上位層の不正値はビルトインではなく直下の層へ戻る ---
+
+_TYPE_CONFUSION_SHAPES = [0, "x", [], None, True, 1.5]
+
+
+def _with_layers(monkeypatch, tmp_path, global_cfg, project_cfg):
+    g = tmp_path / "global.json"
+    g.write_text(json.dumps(global_cfg), encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", g)
+    proj = tmp_path / "proj"
+    proj.mkdir(exist_ok=True)
+    (proj / ".claude-hooks.json").write_text(json.dumps(project_cfg), encoding="utf-8")
+    return config.load_config(str(proj))
+
+
+def test_project_type_confusion_keeps_global_hardening(monkeypatch, tmp_path):
+    """セクションを非dictで潰してもグローバルの強化値は消えない(却下ラウンド1の回帰)。"""
+    hardened = {
+        "exfil_guard": {"mode": "always", "categories": {"pii": "deny"}},
+        "bash_guard": {"protected_branches": ["main", "staging"]},
+    }
+    for shape in _TYPE_CONFUSION_SHAPES:
+        cfg = _with_layers(
+            monkeypatch, tmp_path, hardened,
+            {"exfil_guard": shape, "bash_guard": shape},
+        )
+        assert cfg["exfil_guard"]["mode"] == "always", shape
+        assert cfg["exfil_guard"]["categories"]["pii"] == "deny", shape
+        assert cfg["bash_guard"]["protected_branches"] == ["main", "staging"], shape
+        assert cfg["_errors"], shape
+
+
+def test_project_nested_confusion_keeps_global_value(monkeypatch, tmp_path):
+    """ネストしたdictを非dictで潰した場合も直下の層へ戻る。"""
+    cfg = _with_layers(
+        monkeypatch, tmp_path,
+        {"exfil_guard": {"categories": {"pii": "deny"}}},
+        {"exfil_guard": {"categories": "x"}},
+    )
+    assert cfg["exfil_guard"]["categories"]["pii"] == "deny"
+
+
+def test_project_bad_enum_and_category_keep_global_value(monkeypatch, tmp_path):
+    """列挙・カテゴリの不正値もビルトインでなくグローバルの値へ戻る。"""
+    cfg = _with_layers(
+        monkeypatch, tmp_path,
+        {"exfil_guard": {"mode": "always", "categories": {"pii": "deny"}}},
+        {"exfil_guard": {"mode": "bogus", "categories": {"pii": "bogus"}}},
+    )
+    assert cfg["exfil_guard"]["mode"] == "always"
+    assert cfg["exfil_guard"]["categories"]["pii"] == "deny"
+
+
+def test_project_bad_list_keeps_global_list(monkeypatch, tmp_path):
+    """文字列リストの不正値もグローバルの値へ戻る(既定値の空リストにしない)。"""
+    cfg = _with_layers(
+        monkeypatch, tmp_path,
+        {"secrets_guard": {"write_protected_paths": ["infra/**"]}},
+        {"secrets_guard": {"write_protected_paths": [1, 2]}},
+    )
+    assert cfg["secrets_guard"]["write_protected_paths"] == ["infra/**"]
+
+
+def test_project_bad_scanners_keep_global_values(monkeypatch, tmp_path):
+    """scanners の不正値もグローバルの値へ戻る。"""
+    cfg = _with_layers(
+        monkeypatch, tmp_path,
+        {"scanners": {"gitleaks_image": "example/gitleaks:pinned",
+                      "gitleaks_config": ".gitleaks.toml"}},
+        {"scanners": {"gitleaks_image": 1, "gitleaks_config": []}},
+    )
+    assert cfg["scanners"]["gitleaks_image"] == "example/gitleaks:pinned"
+    assert cfg["scanners"]["gitleaks_config"] == ".gitleaks.toml"
+
+
+def test_global_bad_type_still_falls_back_to_builtin(monkeypatch, tmp_path):
+    """最上位でない層(グローバル)の不正値はビルトイン既定へ戻る(従来どおり)。"""
+    cfg = _with_layers(monkeypatch, tmp_path, {"exfil_guard": 0}, {})
+    assert cfg["exfil_guard"]["mode"] == "detect"
+    assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
+
+
+def test_legitimate_project_override_unaffected(monkeypatch, tmp_path):
+    """正当なプロジェクト上書きは従来どおり効き、警告も出ない(false-positive方向)。"""
+    cfg = _with_layers(
+        monkeypatch, tmp_path,
+        {"exfil_guard": {"mode": "detect", "categories": {"pii": "ask"}}},
+        {"exfil_guard": {"mode": "always", "categories": {"pii": "deny"}}},
+    )
+    assert cfg["exfil_guard"]["mode"] == "always"
+    assert cfg["exfil_guard"]["categories"]["pii"] == "deny"
+    assert cfg["_errors"] == []
+
+
+def test_unknown_category_key_absent_from_lower_layer_is_dropped(monkeypatch, tmp_path):
+    """下位層に存在しない未知カテゴリの不正値は削除する(戻す先がないため)。"""
+    cfg = _with_layers(
+        monkeypatch, tmp_path, {}, {"exfil_guard": {"categories": {"unknown": "bogus"}}},
+    )
+    assert "unknown" not in cfg["exfil_guard"]["categories"]
+    assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"

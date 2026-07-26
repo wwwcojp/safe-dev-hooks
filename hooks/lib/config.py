@@ -94,54 +94,72 @@ def _load_config(cwd: str | None = None) -> dict:
         if not isinstance(data, dict):
             errors.append(f"{path}: オブジェクトではありません")
             continue
-        cfg = _merge(cfg, data)
+        # 層ごとにマージ直後へ検証を挟む。不正値の縮退先は最下層(ビルトイン既定)
+        # ではなく「その層をマージする前の状態」= 直下の層である。
+        # deepcopyは _merge が未変更セクションを base と共有するための別名化を断つ。
+        cfg = _validate(copy.deepcopy(_merge(cfg, data)), cfg, errors)
+    cfg["_errors"] = errors
+    return cfg
+
+
+def _validate(cfg: dict, fallback: dict, errors: list) -> dict:
+    """1層分のマージ結果を検証し、不正値を`fallback`(直下の層)の値へ戻す。
+
+    層構造の意味は「上位が下位を上書きする」であり、上位層が壊れた値を持ち込んだ
+    ときの縮退先はビルトイン既定ではなく直下の層である。最下層へ戻すと、中間層
+    (グローバル設定)でユーザーが行った強化までプロジェクト設定から消せてしまう。
+    型のスキーマは`DEFAULTS`から取り、採用する値は`fallback`から取る。
+    """
+    def revert(container: dict, key, source, label: str, value) -> None:
+        errors.append(f"{label}: 不正な値 {value!r} のため無視しました(下位層の値を使用)")
+        container[key] = copy.deepcopy(source)
+
     for key, default_value in DEFAULTS.items():
         if not isinstance(cfg.get(key), type(default_value)):
-            errors.append(f"{key}: 設定値の型が不正なため既定値を使用します")
-            cfg[key] = copy.deepcopy(default_value)
+            revert(cfg, key, fallback.get(key, default_value), key, cfg.get(key))
     for (section, sub_key), allowed in _ENUM_KEYS.items():
-        value = cfg.get(section, {}).get(sub_key)
+        value = cfg[section].get(sub_key)
         if value not in allowed:
-            errors.append(
-                f"{section}.{sub_key}: 未知の値 {value!r} のため既定値を使用します"
-            )
-            cfg[section][sub_key] = DEFAULTS[section][sub_key]
-    categories = cfg.get("exfil_guard", {}).get("categories")
+            source = fallback.get(section, {}).get(sub_key, DEFAULTS[section][sub_key])
+            revert(cfg[section], sub_key, source, f"{section}.{sub_key}", value)
+    fallback_categories = fallback.get("exfil_guard", {}).get("categories")
+    if not isinstance(fallback_categories, dict):
+        fallback_categories = DEFAULTS["exfil_guard"]["categories"]
+    categories = cfg["exfil_guard"].get("categories")
     if not isinstance(categories, dict):
-        errors.append("exfil_guard.categories: オブジェクトでないため既定値を使用します")
-        categories = copy.deepcopy(DEFAULTS["exfil_guard"]["categories"])
-        cfg["exfil_guard"]["categories"] = categories
+        revert(
+            cfg["exfil_guard"], "categories", fallback_categories,
+            "exfil_guard.categories", categories,
+        )
+        categories = cfg["exfil_guard"]["categories"]
     for cat_key, cat_value in list(categories.items()):
-        if cat_value not in _CATEGORY_ACTIONS:
-            errors.append(
-                f"exfil_guard.categories.{cat_key}: 未知の値 {cat_value!r} のため既定値を使用します"
-            )
-            default_categories = DEFAULTS["exfil_guard"]["categories"]
-            if cat_key in default_categories:
-                categories[cat_key] = default_categories[cat_key]
-            else:
-                del categories[cat_key]
-    pb = cfg.get("bash_guard", {}).get("protected_branches")
-    if not isinstance(pb, list) or not all(isinstance(x, str) for x in pb):
-        msg = "bash_guard.protected_branches: 文字列リストでないため既定値を使用します"
-        errors.append(msg)
-        cfg["bash_guard"]["protected_branches"] = list(
-            DEFAULTS["bash_guard"]["protected_branches"]
+        if cat_value in _CATEGORY_ACTIONS:
+            continue
+        label = f"exfil_guard.categories.{cat_key}"
+        if cat_key in fallback_categories:
+            revert(categories, cat_key, fallback_categories[cat_key], label, cat_value)
+        else:
+            errors.append(f"{label}: 不正な値 {cat_value!r} のため無視しました")
+            del categories[cat_key]
+    for section, sub_key in (
+        ("bash_guard", "protected_branches"),
+        ("secrets_guard", "write_protected_paths"),
+    ):
+        value = cfg[section].get(sub_key)
+        if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+            source = fallback.get(section, {}).get(sub_key, DEFAULTS[section][sub_key])
+            revert(cfg[section], sub_key, source, f"{section}.{sub_key}", value)
+    image = cfg["scanners"].get("gitleaks_image")
+    if not isinstance(image, str):
+        source = fallback.get("scanners", {}).get(
+            "gitleaks_image", DEFAULTS["scanners"]["gitleaks_image"]
         )
-    wp = cfg.get("secrets_guard", {}).get("write_protected_paths")
-    if not isinstance(wp, list) or not all(isinstance(x, str) for x in wp):
-        msg = "secrets_guard.write_protected_paths: 文字列リストでないため既定値を使用します"
-        errors.append(msg)
-        cfg["secrets_guard"]["write_protected_paths"] = []
-    sc = cfg.get("scanners", {})
-    if not isinstance(sc.get("gitleaks_image"), str):
-        errors.append("scanners.gitleaks_image: 文字列でないため既定値を使用します")
-        cfg["scanners"]["gitleaks_image"] = DEFAULTS["scanners"]["gitleaks_image"]
-    gc = sc.get("gitleaks_config")
-    if gc is not None and not isinstance(gc, str):
-        errors.append(
-            "scanners.gitleaks_config: 文字列またはnullでないため既定値を使用します"
+        revert(cfg["scanners"], "gitleaks_image", source, "scanners.gitleaks_image", image)
+    gitleaks_config = cfg["scanners"].get("gitleaks_config")
+    if gitleaks_config is not None and not isinstance(gitleaks_config, str):
+        source = fallback.get("scanners", {}).get("gitleaks_config")
+        revert(
+            cfg["scanners"], "gitleaks_config", source,
+            "scanners.gitleaks_config", gitleaks_config,
         )
-        cfg["scanners"]["gitleaks_config"] = None
-    cfg["_errors"] = errors
     return cfg
