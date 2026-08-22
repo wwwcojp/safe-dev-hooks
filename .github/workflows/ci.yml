@@ -17,6 +17,6 @@ jobs:
             exit 1
           fi
       - name: Lint
-        run: uv run ruff check hooks tests
+        run: uv run ruff check hooks tests scripts
       - name: Test
         run: uv run pytest -q

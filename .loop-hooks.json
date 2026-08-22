@@ -1,0 +1,8 @@
+{
+  "gate": {
+    "command": "uv run python scripts/verify.py quick",
+    "timeout_sec": 120,
+    "watch": ["*.py", "*.json", "pyproject.toml"],
+    "ignore": [".loop/*", ".superpowers/*"]
+  }
+}
