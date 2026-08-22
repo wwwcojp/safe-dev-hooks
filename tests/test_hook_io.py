@@ -29,9 +29,40 @@ def test_pre_tool_decision_shape():
 
 def test_post_block_shape():
     out = hook_io.post_block("直してください", context="詳細")
-    assert out["decision"] == "block"
-    assert out["reason"] == "直してください"
-    assert out["hookSpecificOutput"]["additionalContext"] == "詳細"
+    assert out == {
+        "decision": "block",
+        "reason": "直してください",
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "詳細",
+        },
+    }
+
+
+def test_post_block_without_context_omits_hook_specific_output():
+    out = hook_io.post_block("直してください")
+    assert out == {"decision": "block", "reason": "直してください"}
+
+
+def test_emit_writes_json_line_without_ascii_escaping(capsys):
+    hook_io.emit({"msg": "日本語"})
+    captured = capsys.readouterr().out
+    assert captured == json.dumps({"msg": "日本語"}, ensure_ascii=False) + "\n"
+    # ensure_ascii=False の非エスケープを厳密に確認(\u エスケープが残っていない)
+    assert "\\u" not in captured
+    assert "日本語" in captured
+
+
+def test_fail_open_emits_message_and_exits_zero(capsys):
+    with pytest.raises(SystemExit) as e:
+        hook_io.fail_open("bash_guard", RuntimeError("boom"))
+    assert e.value.code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "systemMessage": (
+            "[safe-dev-hooks] bash_guard が異常終了したため検査をスキップしました: boom"
+        )
+    }
 
 
 def test_finalize_emits_and_exits(capsys):
@@ -61,3 +92,15 @@ def test_finalize_preserves_existing_system_message(capsys):
     out = json.loads(capsys.readouterr().out)
     assert "既存の注記" in out["systemMessage"]
     assert "broken.json" in out["systemMessage"]
+
+
+def test_finalize_config_error_message_exact_text(capsys):
+    # プレフィックス文言と "; " 区切りを厳密に固定する
+    with pytest.raises(SystemExit):
+        hook_io.finalize(None, {"_errors": ["a.json", "b.json"]})
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "systemMessage": (
+            "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: a.json; b.json"
+        )
+    }
