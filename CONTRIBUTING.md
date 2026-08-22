@@ -7,6 +7,14 @@
 - [`uv`](https://docs.astral.sh/uv/)(Python本体はuvが解決するため個別インストール不要)
 - リポジトリのclone後、依存関係のインストールは不要(`uv run` が都度解決する)。開発用ツール(`pytest`/`ruff`)を明示的にインストールしたい場合は `uv sync` を実行する
 
+### 検証ゲート(loop-hooks)
+
+このリポジトリは [loop-hooks](~/loop-hooks) プラグインによる「ターン終了時の検証ゲート」を前提に開発する。`.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンの終了時に `uv run python scripts/verify.py quick`(実ホームパスのリークチェック → `ruff check` → `pytest`。CI と同じコマンド・同じ順序)が強制され、失敗するとターンを終われない。結果は `.loop/evidence.jsonl`(gitignore)に1実行1行で記録される。
+
+- 手動で回すとき: `uv run python scripts/verify.py quick`(約1秒)
+- 設定は `.loop-hooks.json`。ゲート設定と `.loop/state.json` は書き込み保護されており、エージェントは変更できない(ゲートに詰まったらコードを直す)
+- 有効化はプロジェクト単位: `.claude/settings.local.json` の `enabledPlugins` に `"loop-hooks@loop-hooks": true`(設計: `docs/superpowers/specs/2026-08-22-loop-engineering-phase1-design.md`)
+
 ### ドッグフーディング時の注意(このリポジトリ自身のHooksを有効にして開発する場合)
 
 `secrets_guard` の `write_protected` は、このインストール自身の `hooks/`/`rules/` ディレクトリ配下と `.claude-hooks.json`/`settings.json`/`settings.local.json`/`hooks.json` への改変(`Edit`/`Write`/Bash経由の変異コマンド)をdenyする(詳細: [docs/hooks/secrets_guard.md](docs/hooks/secrets_guard.md))。このプラグイン自身を有効にした状態でこのリポジトリを開発すると、まさに開発対象である `hooks/*.py` や `rules/*.json` の編集がこのHookによって遮断される。開発中は次のいずれかで回避すること。
@@ -31,14 +39,12 @@
      - **危険系**: 新パターンが検出されて `deny`/`ask`/`block` が返ること
      - **安全系**: 似ているが該当しない入力(誤検知しやすいケース)が通過すること
      - 可能であれば **バイパス試行**(`&&`/`;`/`||` 連結、クォート・エスケープ、`$()` 置換、大文字小文字違い等)も追加する
-3. **`uv run pytest -q` を実行し、全テストが green であることを確認する**
-4. **`uv run ruff check hooks tests` でlintエラーが無いことを確認する**
-5. 影響するドキュメント([README.ja.md](README.ja.md)/[README.md](README.md)、`docs/hooks/<hook名>.md`、必要なら `docs/security-model.md` の既知の限界)を更新する
+3. **`uv run python scripts/verify.py quick` を実行し、全チェック(リーク・lint・テスト)が通ることを確認する**
+4. 影響するドキュメント([README.ja.md](README.ja.md)/[README.md](README.md)、`docs/hooks/<hook名>.md`、必要なら `docs/security-model.md` の既知の限界)を更新する
 
 ## PRを出す前の確認事項
 
-- [ ] `uv run pytest -q` が green である
-- [ ] `uv run ruff check hooks tests` がクリーンである(CI と同じコマンド、`.github/workflows/ci.yml` 参照)
+- [ ] `uv run python scripts/verify.py quick` が通る(= `pytest -q` green、`ruff check hooks tests scripts` クリーン、実ホームパスのリークなし。CI と同じ3チェック、`.github/workflows/ci.yml` 参照)
 - [ ] `rules/*.json` を変更した場合、対応するテストケース(危険系/安全系)を追加している
 - [ ] 挙動を変更・追加した場合、README(日英)または `docs/` の該当箇所を更新している
 - [ ] deny層のルールを追加する場合、それが「回復不能な操作」であり設定で解除すべきでないことを確認している(グレーな操作は `bash_ask.json`/`extra_ask` を使う)
