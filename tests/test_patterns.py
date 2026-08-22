@@ -7,11 +7,29 @@ def test_luhn_valid_and_invalid():
     assert patterns.luhn_ok("abc") is False
 
 
+def test_luhn_rejects_non_digit_even_when_length_is_13_or_more():
+    # 13文字以上でも非数字混じりなら例外を出さず False(先頭ガードの or/and 境界)
+    assert patterns.luhn_ok("abcdefghijklm") is False
+
+
+def test_luhn_boundary_length_13_is_accepted_and_validated():
+    # 13桁ちょうどの有効な Luhn 番号。<13/<=13/<14 の境界、偶数インデックスの
+    # 2倍化(i%2==1)、2倍後 9 超の -9 補正、total への加算、を全て貫通する
+    assert patterns.luhn_ok("6604876475933") is True
+
+
 def test_mynumber_check_digit():
     # 11桁 "12345678901" のチェックデジットは 8(仕様書のアルゴリズム参照)
     assert patterns.mynumber_ok("123456789018") is True
     assert patterns.mynumber_ok("123456789012") is False
     assert patterns.mynumber_ok("12345") is False
+
+
+def test_mynumber_check_digit_rem_boundaries():
+    # rem(total%11)==1 のとき check は 0(rem<=1 の境界。rem<1 だと違う結果になる)
+    assert patterns.mynumber_ok("598773529470") is True
+    # rem==2 のとき check は 11-2=9(rem<=1 と rem<=2 の境界)
+    assert patterns.mynumber_ok("704789046929") is True
 
 
 def test_scan_detects_aws_key():
@@ -79,3 +97,25 @@ def test_scan_dedupes_identical_matches():
     text = "x=AKIAIOSFODNN7EXAMPLE y=AKIAIOSFODNN7EXAMPLE"
     hits = [h for h in patterns.scan_text(text, rules) if h["rule"] == "aws-access-key"]
     assert len(hits) == 1
+
+
+def test_scan_continues_scanning_after_a_validator_rejects_a_match():
+    # バリデータ不通過(continue)は「このマッチを捨てて次のマッチを見る」であって
+    # 「このルールの走査を中断する」(break)ではない
+    rules = patterns.load_rules("pii_patterns.json")
+    text = "4111 1111 1111 1112 4111 1111 1111 1111"
+    hits = [h["match"] for h in patterns.scan_text(text, rules) if h["rule"] == "credit-card"]
+    assert hits == ["4111 1111 1111 1111"]
+
+
+def test_scan_caps_findings_per_rule_and_still_processes_next_rule():
+    # 1ルールあたりの上限は ちょうど MAX_FINDINGS_PER_RULE(20)件(>= の境界)で、
+    # 上限到達後は break でこのルールの走査だけを打ち切り、次のルールは処理を続ける
+    capped_rule = {"name": "capped", "regex": r"X\d+"}
+    other_rule = {"name": "other", "regex": r"Y\d+"}
+    text = " ".join(f"X{i}" for i in range(25)) + " Y1"
+    hits = patterns.scan_text(text, [capped_rule, other_rule])
+    capped = [h["match"] for h in hits if h["rule"] == "capped"]
+    other = [h["match"] for h in hits if h["rule"] == "other"]
+    assert capped == [f"X{i}" for i in range(patterns.MAX_FINDINGS_PER_RULE)]
+    assert other == ["Y1"]

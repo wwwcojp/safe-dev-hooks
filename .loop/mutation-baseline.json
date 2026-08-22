@@ -2,9 +2,9 @@
   "files": {
     "hooks/lib/config.py": 77.0,
     "hooks/lib/hook_io.py": 81.0,
-    "hooks/lib/patterns.py": 83.0,
+    "hooks/lib/patterns.py": 95.5,
     "hooks/lib/scanners.py": 87.2,
     "hooks/pre_tool_use/bash_guard.py": 66.3
   },
-  "updated": "2026-08-22T12:15:32Z"
+  "updated": "2026-08-22T12:32:49Z"
 }
