@@ -12,7 +12,7 @@ def read_event() -> dict:
 
 
 def emit(obj: dict) -> None:
-    json.dump(obj, sys.stdout, ensure_ascii=False)  # pragma: no mutate (Noneも偽でFalse同値)
+    json.dump(obj, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
 
 
