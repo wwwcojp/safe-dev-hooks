@@ -83,13 +83,15 @@ def load_config(cwd: str | None = None) -> dict:
             errors.append(f"{key}: 設定値の型が不正なため既定値を使用します")
             cfg[key] = copy.deepcopy(default_value)
     for (section, sub_key), allowed in _ENUM_KEYS.items():
-        value = cfg.get(section, {}).get(sub_key)
+        # sectionは直前のDEFAULTS型検証ループで必ずdictとして存在し、getの第2引数は全入力で到達不能
+        value = cfg.get(section, {}).get(sub_key)  # pragma: no mutate
         if value not in allowed:
             errors.append(
                 f"{section}.{sub_key}: 未知の値 {value!r} のため既定値を使用します"
             )
             cfg[section][sub_key] = DEFAULTS[section][sub_key]
-    categories = cfg.get("exfil_guard", {}).get("categories", {})
+    # exfil_guard/categoriesは型検証・merge/deepcopyで必ず存在し、getの第2引数は全入力で到達不能
+    categories = cfg.get("exfil_guard", {}).get("categories", {})  # pragma: no mutate
     for cat_key, cat_value in list(categories.items()):
         if cat_value not in _CATEGORY_ACTIONS:
             errors.append(
@@ -100,19 +102,22 @@ def load_config(cwd: str | None = None) -> dict:
                 categories[cat_key] = default_categories[cat_key]
             else:
                 del categories[cat_key]
-    pb = cfg.get("bash_guard", {}).get("protected_branches")
+    # bash_guardは直前のDEFAULTS型検証ループで必ずdictとして存在し、getの第2引数は全入力で到達不能
+    pb = cfg.get("bash_guard", {}).get("protected_branches")  # pragma: no mutate
     if not isinstance(pb, list) or not all(isinstance(x, str) for x in pb):
         msg = "bash_guard.protected_branches: 文字列リストでないため既定値を使用します"
         errors.append(msg)
         cfg["bash_guard"]["protected_branches"] = list(
             DEFAULTS["bash_guard"]["protected_branches"]
         )
-    wp = cfg.get("secrets_guard", {}).get("write_protected_paths")
+    # secrets_guardは直前の型検証で必ずdictとして存在し、getの第2引数は全入力で到達不能
+    wp = cfg.get("secrets_guard", {}).get("write_protected_paths")  # pragma: no mutate
     if not isinstance(wp, list) or not all(isinstance(x, str) for x in wp):
         msg = "secrets_guard.write_protected_paths: 文字列リストでないため既定値を使用します"
         errors.append(msg)
         cfg["secrets_guard"]["write_protected_paths"] = []
-    sc = cfg.get("scanners", {})
+    # scannersは直前のDEFAULTS型検証ループで必ずdictとして存在し、getの第2引数は全入力で到達不能
+    sc = cfg.get("scanners", {})  # pragma: no mutate
     if not isinstance(sc.get("gitleaks_image"), str):
         errors.append("scanners.gitleaks_image: 文字列でないため既定値を使用します")
         cfg["scanners"]["gitleaks_image"] = DEFAULTS["scanners"]["gitleaks_image"]

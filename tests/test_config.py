@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from hooks.lib import config
 
@@ -32,17 +33,97 @@ def test_project_overrides_global(monkeypatch, tmp_path):
 
 def test_broken_json_records_error_and_keeps_defaults(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
-    (tmp_path / ".claude-hooks.json").write_text("{broken", encoding="utf-8")
+    proj = tmp_path / ".claude-hooks.json"
+    proj.write_text("{broken", encoding="utf-8")
     cfg = config.load_config(str(tmp_path))
     assert len(cfg["_errors"]) == 1
+    assert cfg["_errors"][0].startswith(f"{proj}: ")
     assert cfg["exfil_guard"]["mode"] == "detect"
+
+
+def test_broken_global_json_does_not_block_project_layer(monkeypatch, tmp_path):
+    g = tmp_path / "global.json"
+    g.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", g)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".claude-hooks.json").write_text(
+        json.dumps({"exfil_guard": {"mode": "always"}}), encoding="utf-8"
+    )
+    cfg = config.load_config(str(proj))
+    # continue でなく break だと、global のエラー後に project 層の読み込みがスキップされる
+    assert cfg["exfil_guard"]["mode"] == "always"
+    assert len(cfg["_errors"]) == 1
 
 
 def test_non_dict_config_records_error(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
-    (tmp_path / ".claude-hooks.json").write_text("[1,2]", encoding="utf-8")
+    proj = tmp_path / ".claude-hooks.json"
+    proj.write_text("[1,2]", encoding="utf-8")
     cfg = config.load_config(str(tmp_path))
+    assert cfg["_errors"] == [f"{proj}: オブジェクトではありません"]
+
+
+def test_non_dict_global_config_does_not_block_project_layer(monkeypatch, tmp_path):
+    g = tmp_path / "global.json"
+    g.write_text("[1,2]", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", g)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".claude-hooks.json").write_text(
+        json.dumps({"exfil_guard": {"mode": "always"}}), encoding="utf-8"
+    )
+    cfg = config.load_config(str(proj))
+    # continue でなく break だと、global のエラー後に project 層の読み込みがスキップされる
+    assert cfg["exfil_guard"]["mode"] == "always"
     assert len(cfg["_errors"]) == 1
+
+
+def test_load_config_default_cwd_uses_current_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"exfil_guard": {"mode": "always"}}), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    cfg = config.load_config()
+    assert cfg["exfil_guard"]["mode"] == "always"
+
+
+def test_load_config_reads_project_file_with_utf8_encoding(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    proj = tmp_path / ".claude-hooks.json"
+    proj.write_text(json.dumps({"exfil_guard": {"mode": "always"}}), encoding="utf-8")
+    seen_encodings = []
+    orig_read_text = Path.read_text
+
+    def spy_read_text(self, *args, **kwargs):
+        if self == proj:
+            seen_encodings.append(kwargs.get("encoding"))
+        return orig_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", spy_read_text)
+    config.load_config(str(tmp_path))
+    assert seen_encodings == ["utf-8"]
+
+
+def test_load_config_returns_independent_copy_of_defaults(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["audit_log"] is not config.DEFAULTS["audit_log"]
+    cfg["audit_log"]["path"] = "/mutated/path"
+    assert config.DEFAULTS["audit_log"]["path"] == ".claude/logs"
+
+
+def test_type_mismatch_reset_does_not_alias_defaults(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"exfil_guard": "not-a-dict"}), encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["exfil_guard"] == config.DEFAULTS["exfil_guard"]
+    assert cfg["exfil_guard"]["categories"] is not config.DEFAULTS["exfil_guard"]["categories"]
+    cfg["exfil_guard"]["categories"]["custom"] = "mutated"
+    assert config.DEFAULTS["exfil_guard"]["categories"]["custom"] == "ask"
 
 
 def test_config_section_type_mismatch_resets_to_default(monkeypatch, tmp_path):
@@ -62,7 +143,10 @@ def test_enum_typo_falls_back_to_safe_default(monkeypatch, tmp_path):
     cfg = config.load_config(str(tmp_path))
     assert cfg["exfil_guard"]["mode"] == "detect"
     assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
-    assert len(cfg["_errors"]) == 2
+    assert cfg["_errors"] == [
+        "exfil_guard.mode: 未知の値 'detct' のため既定値を使用します",
+        "exfil_guard.categories.credentials: 未知の値 'denny' のため既定値を使用します",
+    ]
 
 
 def test_notify_method_default_and_typo_fallback(monkeypatch, tmp_path):
@@ -104,7 +188,9 @@ def test_protected_branches_invalid_type_falls_back(tmp_path, monkeypatch):
     assert cfg["bash_guard"]["protected_branches"] == [
         "main", "master", "develop", "release", "production"
     ]
-    assert any("protected_branches" in e for e in cfg["_errors"])
+    assert cfg["_errors"] == [
+        "bash_guard.protected_branches: 文字列リストでないため既定値を使用します"
+    ]
 
 
 def test_write_protected_paths_invalid_type_falls_back(tmp_path, monkeypatch):
@@ -114,7 +200,9 @@ def test_write_protected_paths_invalid_type_falls_back(tmp_path, monkeypatch):
     )
     cfg = config.load_config(str(tmp_path))
     assert cfg["secrets_guard"]["write_protected_paths"] == []
-    assert any("write_protected_paths" in e for e in cfg["_errors"])
+    assert cfg["_errors"] == [
+        "secrets_guard.write_protected_paths: 文字列リストでないため既定値を使用します"
+    ]
 
 
 def test_scanners_defaults(monkeypatch, tmp_path):
@@ -151,4 +239,18 @@ def test_scanners_config_type_fallback(monkeypatch, tmp_path):
     )
     cfg = config.load_config(str(tmp_path))
     assert cfg["scanners"]["gitleaks_config"] is None
-    assert any("gitleaks_config" in e for e in cfg["_errors"])
+    assert cfg["_errors"] == [
+        "scanners.gitleaks_config: 文字列またはnullでないため既定値を使用します"
+    ]
+
+
+def test_scanners_gitleaks_image_type_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"scanners": {"gitleaks_image": 123}}', encoding="utf-8"
+    )
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["scanners"]["gitleaks_image"] == config.DEFAULTS["scanners"]["gitleaks_image"]
+    assert cfg["_errors"] == [
+        "scanners.gitleaks_image: 文字列でないため既定値を使用します"
+    ]
