@@ -1,10 +1,10 @@
 {
   "files": {
-    "hooks/lib/config.py": 100.0,
+    "hooks/lib/config.py": 92.5,
     "hooks/lib/hook_io.py": 98.7,
     "hooks/lib/patterns.py": 95.5,
     "hooks/lib/scanners.py": 99.3,
     "hooks/pre_tool_use/bash_guard.py": 66.3
   },
-  "updated": "2026-08-22T13:08:18Z"
+  "updated": "2026-08-22T13:55:33Z"
 }
