@@ -1,4 +1,4 @@
-from lib import patterns
+from hooks.lib import patterns
 
 
 def test_luhn_valid_and_invalid():

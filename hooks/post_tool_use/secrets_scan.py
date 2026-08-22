@@ -6,8 +6,8 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import config, hook_io, patterns, scanners  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from hooks.lib import config, hook_io, patterns, scanners  # noqa: E402
 
 WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
 CONTENT_KEYS = ("content", "new_string", "new_source")

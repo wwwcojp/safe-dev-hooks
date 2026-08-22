@@ -1,6 +1,6 @@
 import json
 
-from lib import config
+from hooks.lib import config
 
 
 def test_defaults_when_no_files(monkeypatch, tmp_path):

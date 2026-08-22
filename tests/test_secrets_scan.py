@@ -3,7 +3,8 @@ import json
 
 import pytest
 from helpers import load_hook
-from lib import config
+
+from hooks.lib import config
 
 scan = load_hook("post_tool_use/secrets_scan.py")
 

@@ -3,7 +3,8 @@ import json
 
 import pytest
 from helpers import load_hook
-from lib import config
+
+from hooks.lib import config
 
 audit = load_hook("audit/audit_log.py")
 notify = load_hook("notification/notify.py")

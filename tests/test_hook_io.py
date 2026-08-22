@@ -2,7 +2,8 @@ import io
 import json
 
 import pytest
-from lib import hook_io
+
+from hooks.lib import hook_io
 
 
 def test_read_event_parses_stdin(monkeypatch):

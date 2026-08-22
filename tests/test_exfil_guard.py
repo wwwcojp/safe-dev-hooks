@@ -3,7 +3,8 @@ import json
 
 import pytest
 from helpers import load_hook
-from lib import config
+
+from hooks.lib import config
 
 exfil_guard = load_hook("pre_tool_use/exfil_guard.py")
 

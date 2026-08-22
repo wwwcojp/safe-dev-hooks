@@ -1,6 +1,6 @@
 import json
 
-from lib import scanners
+from hooks.lib import scanners
 
 # --- _gitleaks_argv(純関数) ---
 

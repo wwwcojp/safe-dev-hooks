@@ -10,8 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lib import config, hook_io  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from hooks.lib import config, hook_io  # noqa: E402
 
 WRITE_TOOLS = ("Edit", "Write")
 COMMAND_TIMEOUT_SEC = 45

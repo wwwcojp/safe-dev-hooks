@@ -3,7 +3,8 @@ import json
 
 import pytest
 from helpers import load_hook
-from lib import config
+
+from hooks.lib import config
 
 config_guard = load_hook("config_change/config_guard.py")
 

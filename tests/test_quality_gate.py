@@ -4,7 +4,8 @@ import shlex
 
 import pytest
 from helpers import load_hook
-from lib import config
+
+from hooks.lib import config
 
 qg = load_hook("post_tool_use/quality_gate.py")
 
