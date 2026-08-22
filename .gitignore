@@ -16,7 +16,12 @@ logs/
 *.jsonl
 
 # loop-hooks のゲート状態・evidence(ローカル作業証跡。最終判定者はCI)
-.loop/
+# mutation baseline だけは Git 追跡する(ラチェットを clone 間で共有し、PR の diff でレビューする)
+.loop/*
+!.loop/mutation-baseline.json
+
+# mutmut の作業ディレクトリ
+mutants/
 
 # Local-only Claude settings
 .claude/settings.local.json
