@@ -39,7 +39,7 @@ mutmut は変異キーを**ファイルパス由来**(`hooks.lib.patterns`)で�
 | `hooks/__init__.py` | 空ファイルを追加(名前空間パッケージの合流を防ぎ、`hooks` を通常パッケージにする) |
 | hook スクリプト 9 本(`pre_tool_use/bash_guard.py`・`secrets_guard.py`・`exfil_guard.py`、`post_tool_use/secrets_scan.py`・`quality_gate.py`・`exfil_output_scan.py`、`notification/notify.py`、`config_change/config_guard.py`、`audit/audit_log.py`) | `sys.path.insert(0, str(Path(__file__).resolve().parent.parent))` → `.parent.parent.parent`(プラグインルート)、`from lib import …` → `from hooks.lib import …`(`# noqa: E402` は維持) |
 | `hooks/lib/scanners.py` | `from . import patterns` はそのまま(パッケージ内相対 import) |
-| `tests/*.py` 9 本 | `from lib import …` → `from hooks.lib import …` |
+| `tests/*.py` 10 本 | `from lib import …` → `from hooks.lib import …` |
 | `tests/conftest.py` | `sys.path.insert(0, str(REPO_ROOT / "hooks"))` → `sys.path.insert(0, str(REPO_ROOT))` |
 | `tests/helpers.py` `load_hook(relpath)` | `importlib.import_module("hooks." + relpath[:-3].replace("/", "."))`。呼び出しごとに fresh なモジュールを返す従来の契約を保つため、import 前に `sys.modules` から同名を除去する |
 
@@ -189,3 +189,4 @@ mutation の受け入れ条件(判定を壊してテストが落ちることを�
 | `also_copy` の漏れ | テストが新たにリポジトリファイルを読むと mutants 内で落ちる | mutmut の失敗出力がそのまま出る。`also_copy` に足す |
 | baseline の Git 追跡と書込保護の両立 | verify.py の自動更新で diff が出る | 意図した挙動(PR でレビュー)。エージェントが直接編集する経路だけ塞ぐ |
 | 等価変異の判定ミス | 本物の穴を pragma で隠す | pragma には理由コメント必須。レビューで pragma 行を重点確認 |
+| verify.py 自身の改変 | mutation は CI で回らないため、`MUTATION_KILLED_CODES` やラチェット判定を書き換えれば全ファイル 100 にできる | 予防層なし。ブランチレビュー(人間)が唯一の検出点。`scripts/verify.py`・`tests/test_verify.py` の diff を PR で重点確認する |

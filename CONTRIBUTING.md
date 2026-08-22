@@ -16,7 +16,7 @@
 - 手動で回すとき: `uv run python scripts/verify.py quick`(約1秒)
 - **テストを書いた/変えたタスクの完了条件**: `uv run python scripts/verify.py mutation`(mutmut でファイル別 mutation score を計測し、`.loop/mutation-baseline.json` を下回ると fail。上回れば自動更新。baseline は Git 追跡で PR の diff に出る)。対象は `pyproject.toml` `[tool.mutmut] only_mutate`。生き残りは `uv run mutmut results` / `uv run mutmut show <id>` で読み、厳密な期待値のテストで仕留める。真の等価変異のみ `# pragma: no mutate` を行単位で付け、理由をコメントする
 - コミット前: `uv run python scripts/verify.py all`(quick → mutation)
-- 設定は `.loop-hooks.json`。ゲート設定と `.loop/state.json` は `.claude-hooks.json` の `secrets_guard.write_protected_paths` で書き込み保護する(ユーザーが設定。設計書 §6)。ゲートに詰まったらコードを直す — ゲート設定を変えて通さない
+- 設定は `.loop-hooks.json`。ゲート設定と `.loop/state.json` は `.claude-hooks.json` の `secrets_guard.write_protected_paths` で書き込み保護する(ユーザーが設定。`.claude-hooks.json` に `secrets_guard.write_protected_paths` が無ければ未設定 — 設計書 §6 の手順で設定する)。ゲートに詰まったらコードを直す — ゲート設定を変えて通さない
 - 有効化はプロジェクト単位: `.claude/settings.local.json` の `enabledPlugins` に `"loop-hooks@loop-hooks": true`(設計: `docs/superpowers/specs/2026-08-22-loop-engineering-phase1-design.md`)
 
 ### ドッグフーディング時の注意(このリポジトリ自身のHooksを有効にして開発する場合)

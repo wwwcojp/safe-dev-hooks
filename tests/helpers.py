@@ -1,8 +1,5 @@
 import importlib
 import sys
-from pathlib import Path
-
-HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
 
 
 def load_hook(relpath: str):

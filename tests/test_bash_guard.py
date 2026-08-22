@@ -293,7 +293,7 @@ def test_single_quote_bypass_is_denied():
     }
 
 
-def test_expand_simple_assignments_var_boundary_is_case_sensitive():
+def test_expand_simple_assignments_var_boundary_covers_all_name_chars():
     f = bash_guard._expand_simple_assignments
     assert f("T=/; rm -rf $T") == "T=/; rm -rf /"
     assert f("T=/; rm -rf ${T}") == "T=/; rm -rf /"
