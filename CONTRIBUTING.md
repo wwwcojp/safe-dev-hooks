@@ -14,6 +14,8 @@
 このリポジトリは loop-hooks(ローカルプラグイン `~/loop-hooks`)による「ターン終了時の検証ゲート」を前提に開発する。`.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンの終了時に `uv run python scripts/verify.py quick`(実ホームパスのリークチェック → `ruff check` → `pytest`。CI と同じコマンド・同じ順序)が強制され、失敗するとターンを終われない。結果は `.loop/evidence.jsonl`(gitignore)に1実行1行で記録される。
 
 - 手動で回すとき: `uv run python scripts/verify.py quick`(約1秒)
+- **テストを書いた/変えたタスクの完了条件**: `uv run python scripts/verify.py mutation`(mutmut でファイル別 mutation score を計測し、`.loop/mutation-baseline.json` を下回ると fail。上回れば自動更新。baseline は Git 追跡で PR の diff に出る)。対象は `pyproject.toml` `[tool.mutmut] only_mutate`。生き残りは `uv run mutmut results` / `uv run mutmut show <id>` で読み、厳密な期待値のテストで仕留める。真の等価変異のみ `# pragma: no mutate` を行単位で付け、理由をコメントする
+- コミット前: `uv run python scripts/verify.py all`(quick → mutation)
 - 設定は `.loop-hooks.json`。ゲート設定と `.loop/state.json` は `.claude-hooks.json` の `secrets_guard.write_protected_paths` で書き込み保護する(ユーザーが設定。設計書 §6)。ゲートに詰まったらコードを直す — ゲート設定を変えて通さない
 - 有効化はプロジェクト単位: `.claude/settings.local.json` の `enabledPlugins` に `"loop-hooks@loop-hooks": true`(設計: `docs/superpowers/specs/2026-08-22-loop-engineering-phase1-design.md`)
 
@@ -47,6 +49,7 @@
 ## PRを出す前の確認事項
 
 - [ ] `uv run python scripts/verify.py quick` が通る(= `pytest -q` green、`ruff check hooks tests scripts` クリーン、実ホームパスのリークなし。CI と同じ3チェック、`.github/workflows/ci.yml` 参照)
+- [ ] テストを追加・変更した場合、`uv run python scripts/verify.py mutation` が通る(baseline を下回らない。等価変異の `# pragma: no mutate` には理由コメントがある)
 - [ ] `rules/*.json` を変更した場合、対応するテストケース(危険系/安全系)を追加している
 - [ ] 挙動を変更・追加した場合、README(日英)または `docs/` の該当箇所を更新している
 - [ ] deny層のルールを追加する場合、それが「回復不能な操作」であり設定で解除すべきでないことを確認している(グレーな操作は `bash_ask.json`/`extra_ask` を使う)

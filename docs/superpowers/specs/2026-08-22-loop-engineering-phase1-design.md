@@ -194,7 +194,7 @@ mutation の受け入れ条件(打ち切り判定を外してテストが落ち�
 
 news-collector の移植順序を踏襲する。各段階は独立に価値が出るので、段階ごとに運用して次を判断する。
 
-- **第2段階 mutation 自動化**: mutmut のスパイク → `verify.py mutation` ステージ + `.loop/mutation-baseline.json` のラチェット(下回ったら fail。Stop には入れない。テストを書いたタスクの完了条件にする)。
+- **第2段階 mutation 自動化** → **着手済み(2026-08-22)**: `2026-08-22-loop-engineering-phase2-mutation-design.md` を参照(mutmut、ファイル別 score のラチェット、baseline は Git 追跡、対象は lib 4本 + bash_guard)。以下は当初の想定: mutmut のスパイク → `verify.py mutation` ステージ + `.loop/mutation-baseline.json` のラチェット(下回ったら fail。Stop には入れない。テストを書いたタスクの完了条件にする)。
   対象の第1候補は `hooks/lib/patterns.py`・`hooks/lib/config.py`(純粋関数でテストも速い)。baseline の書込保護追加はユーザー手動
 - **第3段階 PBT**: hypothesis を dev 依存に追加。候補: `config.load` は任意の不正 JSON/型で raise しない(0.6.x の修正の不変条件)、
   bash_guard の deny 判定はコマンドの前後空白・`;`/`&&` 連結に対して単調(連結で deny が消えない)
