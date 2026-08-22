@@ -1,6 +1,8 @@
 """検証ランナー。チェックを束ねて実行し、結果を .loop/evidence.jsonl に記録する。
 
 loop-hooks の Stop ゲートから `uv run python scripts/verify.py quick` として呼ばれる。
+`mutation` は mutmut を実行し、ファイル別 score を .loop/mutation-baseline.json とラチェット
+比較する。`all` は quick 成功後に mutation を実行する。
 `quick` の中身は CI(.github/workflows/ci.yml)と同じコマンド・同じ順序に保つこと
 (tests/test_verify.py::test_quick_stage_mirrors_ci が一致を検査する)。
 stdlib のみで書く(hooks/ と同じ流儀)。
@@ -11,7 +13,7 @@ import json
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +44,12 @@ STAGES: dict[str, list[Check]] = {
 }
 
 FAIL_OUTPUT_TAIL = 2000
+
+# mutmut の終了コード→状態(mutmut/__main__.py status_by_exit_code)のうち "killed" のもの。
+# survived(0)・no tests(5/33)・timeout・suspicious 等はすべて「検出できていない」として数える
+MUTATION_KILLED_CODES = frozenset({1, 3, -24})
+MUTMUT_CMD = ["uv", "run", "mutmut", "run"]
+BASELINE_REL = Path(".loop") / "mutation-baseline.json"
 
 
 def run_stage(
@@ -111,10 +119,119 @@ def _append_evidence(
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def mutation_scores(repo_root: Path) -> dict[str, dict[str, Any]]:
+    """mutants/ 配下の *.py.meta からファイル別 {score, killed, total} を集計する。
+
+    キーはリポジトリ相対パス(例: hooks/lib/patterns.py)。
+    """
+    mutants = Path(repo_root) / "mutants"
+    scores: dict[str, dict[str, Any]] = {}
+    for meta in sorted(mutants.rglob("*.py.meta")):
+        codes = json.loads(meta.read_text(encoding="utf-8"))["exit_code_by_key"]
+        if not codes:
+            continue
+        total = len(codes)
+        killed = sum(1 for c in codes.values() if c in MUTATION_KILLED_CODES)
+        rel = meta.relative_to(mutants).as_posix()[: -len(".meta")]
+        scores[rel] = {"score": round(killed / total * 100, 1), "killed": killed, "total": total}
+    return scores
+
+
+def check_mutation_baseline(
+    repo_root: Path, scores: dict[str, dict[str, Any]]
+) -> tuple[bool, list[str]]:
+    """ファイル別ラチェット。(ok, 問題の一覧) を返す。ok で変化があれば baseline を書き換える。
+
+    - 下回ったファイル / baseline にあって結果に無いファイル → fail(全件列挙)
+    - 新規ファイルは登録、上回った分だけ更新。変化が無ければファイルに触らない
+    """
+    path = Path(repo_root) / BASELINE_REL
+    baseline: dict[str, float] = {}
+    if path.exists():
+        baseline = json.loads(path.read_text(encoding="utf-8")).get("files", {})
+    problems: list[str] = []
+    for f, b in sorted(baseline.items()):
+        if f not in scores:
+            problems.append(
+                f"{f}: baseline {b} にあるが今回の結果に無い(only_mutate から外れている?"
+                " 対象の縮小は baseline を手で外す必要がある)"
+            )
+        elif scores[f]["score"] < b:
+            problems.append(f"{f}: score {scores[f]['score']} < baseline {b}")
+    if problems:
+        return False, problems
+    new = {f: max(s["score"], baseline.get(f, 0.0)) for f, s in scores.items()}
+    if new != baseline:
+        path.parent.mkdir(exist_ok=True)
+        payload = {"files": dict(sorted(new.items())), "updated": _utc_now()}
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return True, []
+
+
+def _run_mutmut(repo_root: Path) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            MUTMUT_CMD, capture_output=True, encoding="utf-8", errors="replace",
+            cwd=repo_root, check=False,
+        )
+    except OSError as e:
+        return 1, f"{MUTMUT_CMD[0]}: {e}"
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+def run_mutation(
+    repo_root: Path = REPO_ROOT, runner: Callable[[Path], tuple[int, str]] | None = None
+) -> bool:
+    """mutmut を実行し、ファイル別 score を baseline とラチェット比較して evidence に記録する。"""
+    run = runner or _run_mutmut
+    start = time.monotonic()
+    code, output = run(repo_root)
+    checks: list[dict[str, Any]] = [
+        {"name": "mutmut", "ok": code == 0, "ms": int((time.monotonic() - start) * 1000)}
+    ]
+    if code != 0:
+        _append_evidence(repo_root, "mutation", False, checks)
+        print(output[-FAIL_OUTPUT_TAIL:], file=sys.stderr)
+        return False
+    scores = mutation_scores(repo_root)
+    if not scores:
+        checks.append({"name": "baseline", "ok": False, "scores": {}})
+        _append_evidence(repo_root, "mutation", False, checks)
+        print(
+            "mutants/ に変異結果(*.py.meta)が無い。[tool.mutmut] の only_mutate を確認する",
+            file=sys.stderr,
+        )
+        return False
+    ok, problems = check_mutation_baseline(repo_root, scores)
+    checks.append({"name": "baseline", "ok": ok, "scores": scores})
+    _append_evidence(repo_root, "mutation", ok, checks)
+    if ok:
+        for f, s in sorted(scores.items()):
+            print(f"{f}: {s['score']} ({s['killed']}/{s['total']})")
+    else:
+        print(
+            "mutation score が baseline を下回りました:\n  " + "\n  ".join(problems)
+            + "\n生き残りは `uv run mutmut results` / `uv run mutmut show <id>` で確認し、"
+            "テストを補強してください(等価変異のみ理由付き `# pragma: no mutate`)。",
+            file=sys.stderr,
+        )
+    return ok
+
+
 def main() -> None:
     stage = sys.argv[1] if len(sys.argv) > 1 else "quick"
+    if stage == "mutation":
+        sys.exit(0 if run_mutation() else 1)
+    if stage == "all":
+        sys.exit(0 if (run_stage("quick") and run_mutation()) else 1)
     if stage not in STAGES:
-        raise SystemExit(f"unknown stage: {stage} (available: {', '.join(STAGES)})")
+        raise SystemExit(
+            f"unknown stage: {stage} (available: {', '.join(STAGES)}, mutation, all)"
+        )
     sys.exit(0 if run_stage(stage) else 1)
 
 

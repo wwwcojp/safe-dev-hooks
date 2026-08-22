@@ -182,3 +182,148 @@ def test_quick_stage_mirrors_ci():
     assert re.search(r"\bif\b.*\bexit 1\b", leak_step, re.S), leak_step
     assert lint_step.strip() == "uv run ruff check hooks tests scripts"
     assert tests_step.strip() == "uv run pytest -q"
+
+
+# ---- mutation ステージ(mutmut は実行せず runner を注入する) ----
+
+
+def _write_meta(repo_root, rel, codes):
+    meta = repo_root / "mutants" / (rel + ".meta")
+    meta.parent.mkdir(parents=True, exist_ok=True)
+    meta.write_text(json.dumps({"exit_code_by_key": codes}), encoding="utf-8")
+
+
+def _baseline(repo_root):
+    return json.loads((repo_root / ".loop" / "mutation-baseline.json").read_text(encoding="utf-8"))
+
+
+def _ok_runner(root):
+    return 0, ""
+
+
+def test_mutation_scores_counts_killed_codes_per_file(tmp_path):
+    # 1/3/-24 = killed、0 = survived、33 = no tests、36 = timeout、None = not checked
+    _write_meta(tmp_path, "hooks/lib/a.py",
+                {"k1": 1, "k2": 3, "k3": -24, "k4": 0, "k5": 33, "k6": 36, "k7": None})
+    _write_meta(tmp_path, "hooks/lib/b.py", {"k1": 1, "k2": 1})
+
+    assert verify.mutation_scores(tmp_path) == {
+        "hooks/lib/a.py": {"score": 42.9, "killed": 3, "total": 7},
+        "hooks/lib/b.py": {"score": 100.0, "killed": 2, "total": 2},
+    }
+
+
+def test_mutation_first_run_registers_baseline(tmp_path, capsys):
+    _write_meta(tmp_path, "hooks/lib/a.py", {"k1": 1, "k2": 0})
+
+    ok = verify.run_mutation(tmp_path, runner=_ok_runner)
+
+    assert ok is True
+    assert _baseline(tmp_path)["files"] == {"hooks/lib/a.py": 50.0}
+    assert _baseline(tmp_path)["updated"].endswith("Z")
+    (rec,) = _read_evidence(tmp_path)
+    assert rec["stage"] == "mutation" and rec["pass"] is True
+    assert [c["name"] for c in rec["checks"]] == ["mutmut", "baseline"]
+    assert rec["checks"][1]["scores"]["hooks/lib/a.py"] == {"score": 50.0, "killed": 1, "total": 2}
+    assert "hooks/lib/a.py: 50.0 (1/2)" in capsys.readouterr().out
+
+
+def test_mutation_regression_fails_and_keeps_baseline(tmp_path, capsys):
+    _write_meta(tmp_path, "hooks/lib/a.py", {"k1": 1, "k2": 1})
+    _write_meta(tmp_path, "hooks/lib/b.py", {"k1": 1, "k2": 1})
+    assert verify.run_mutation(tmp_path, runner=_ok_runner) is True
+    _write_meta(tmp_path, "hooks/lib/b.py", {"k1": 1, "k2": 0})  # b: 100 → 50
+
+    ok = verify.run_mutation(tmp_path, runner=_ok_runner)
+
+    assert ok is False
+    assert _baseline(tmp_path)["files"] == {"hooks/lib/a.py": 100.0, "hooks/lib/b.py": 100.0}
+    err = capsys.readouterr().err
+    assert "hooks/lib/b.py: score 50.0 < baseline 100.0" in err
+    assert "hooks/lib/a.py" not in err  # 下回っていないファイルは列挙しない
+    assert "mutmut results" in err
+    assert [r["pass"] for r in _read_evidence(tmp_path)] == [True, False]
+
+
+def test_mutation_improvement_updates_only_that_file(tmp_path):
+    _write_meta(tmp_path, "hooks/lib/a.py", {"k1": 1, "k2": 0})
+    _write_meta(tmp_path, "hooks/lib/b.py", {"k1": 1, "k2": 0})
+    verify.run_mutation(tmp_path, runner=_ok_runner)
+    _write_meta(tmp_path, "hooks/lib/b.py", {"k1": 1, "k2": 1})  # b: 50 → 100
+
+    assert verify.run_mutation(tmp_path, runner=_ok_runner) is True
+    assert _baseline(tmp_path)["files"] == {"hooks/lib/a.py": 50.0, "hooks/lib/b.py": 100.0}
+
+
+def test_mutation_unchanged_scores_do_not_rewrite_baseline(tmp_path):
+    import os
+
+    _write_meta(tmp_path, "hooks/lib/a.py", {"k1": 1, "k2": 0})
+    verify.run_mutation(tmp_path, runner=_ok_runner)
+    path = tmp_path / ".loop" / "mutation-baseline.json"
+    os.utime(path, (1, 1))
+
+    assert verify.run_mutation(tmp_path, runner=_ok_runner) is True
+    assert path.stat().st_mtime == 1  # 変化が無ければ書き換えない(git の diff を汚さない)
+
+
+def test_mutation_missing_file_in_results_fails(tmp_path, capsys):
+    _write_meta(tmp_path, "hooks/lib/a.py", {"k1": 1})
+    _write_meta(tmp_path, "hooks/lib/b.py", {"k1": 1})
+    verify.run_mutation(tmp_path, runner=_ok_runner)
+    (tmp_path / "mutants" / "hooks" / "lib" / "b.py.meta").unlink()  # only_mutate から外れた想定
+
+    assert verify.run_mutation(tmp_path, runner=_ok_runner) is False
+    err = capsys.readouterr().err
+    assert "hooks/lib/b.py" in err and "baseline を手で外す" in err
+    assert _baseline(tmp_path)["files"] == {"hooks/lib/a.py": 100.0, "hooks/lib/b.py": 100.0}
+
+
+def test_mutation_runner_failure_records_evidence_and_keeps_baseline(tmp_path, capsys):
+    _write_meta(tmp_path, "hooks/lib/a.py", {"k1": 1})
+
+    ok = verify.run_mutation(tmp_path, runner=lambda root: (1, "mutmut exploded: THE-MUTMUT-ERROR"))
+
+    assert ok is False
+    assert not (tmp_path / ".loop" / "mutation-baseline.json").exists()
+    (rec,) = _read_evidence(tmp_path)
+    assert rec["pass"] is False
+    assert [(c["name"], c["ok"]) for c in rec["checks"]] == [("mutmut", False)]
+    assert "THE-MUTMUT-ERROR" in capsys.readouterr().err
+
+
+def test_mutation_no_results_fails(tmp_path, capsys):
+    ok = verify.run_mutation(tmp_path, runner=_ok_runner)  # meta が 1 つも無い
+
+    assert ok is False
+    assert "変異結果" in capsys.readouterr().err
+    (rec,) = _read_evidence(tmp_path)
+    assert rec["pass"] is False
+
+
+def test_main_mutation_stage_maps_exit_code(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["verify.py", "mutation"])
+    monkeypatch.setattr(verify, "run_mutation", lambda *a, **k: False)
+    with pytest.raises(SystemExit) as exc:
+        verify.main()
+    assert exc.value.code == 1
+
+
+def test_main_all_skips_mutation_when_quick_fails(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["verify.py", "all"])
+    monkeypatch.setattr(verify, "run_stage", lambda *a, **k: calls.append("quick") or False)
+    monkeypatch.setattr(verify, "run_mutation", lambda *a, **k: calls.append("mutation") or True)
+    with pytest.raises(SystemExit) as exc:
+        verify.main()
+    assert exc.value.code == 1 and calls == ["quick"]
+
+
+def test_main_all_runs_mutation_after_quick(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["verify.py", "all"])
+    monkeypatch.setattr(verify, "run_stage", lambda *a, **k: calls.append("quick") or True)
+    monkeypatch.setattr(verify, "run_mutation", lambda *a, **k: calls.append("mutation") or True)
+    with pytest.raises(SystemExit) as exc:
+        verify.main()
+    assert exc.value.code == 0 and calls == ["quick", "mutation"]
