@@ -20,6 +20,10 @@ from typing import Any
 # CI の「実ホームパスのリークチェック」と同一。変えるときは ci.yml も変える
 LEAK_REGEX = r"/(home|Users)/(?!USER\b|alice\b|user\b)[A-Za-z_][A-Za-z0-9._-]*"
 
+# このファイルの場所から解決したリポジトリルート。手動実行がサブディレクトリからでも
+# evidence がこのリポジトリの .loop/ に落ちるよう、run_stage の既定 repo_root に使う
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 @dataclass(frozen=True)
 class Check:
@@ -41,7 +45,7 @@ FAIL_OUTPUT_TAIL = 2000
 
 
 def run_stage(
-    stage: str, checks: Sequence[Check] | None = None, repo_root: Path = Path(".")
+    stage: str, checks: Sequence[Check] | None = None, repo_root: Path = REPO_ROOT
 ) -> bool:
     """チェックを順に実行し、最初の失敗で打ち切る。結果を evidence に1行追記して成否を返す。"""
     checks = STAGES[stage] if checks is None else checks
@@ -50,15 +54,26 @@ def run_stage(
     fail_output = ""
     for check in checks:
         start = time.monotonic()
-        proc = subprocess.run(
-            check.cmd, capture_output=True, text=True, cwd=repo_root, check=False
-        )
-        ms = int((time.monotonic() - start) * 1000)
-        ok = proc.returncode in check.ok_codes
+        try:
+            proc = subprocess.run(
+                check.cmd,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=repo_root,
+                check=False,
+            )
+            ms = int((time.monotonic() - start) * 1000)
+            ok = proc.returncode in check.ok_codes
+            output = proc.stdout + proc.stderr
+        except OSError as e:
+            ms = int((time.monotonic() - start) * 1000)
+            ok = False
+            output = f"{check.cmd[0]}: {e}"
         results.append({"name": check.name, "ok": ok, "ms": ms})
         if not ok:
             ok_all = False
-            fail_output = (proc.stdout + proc.stderr)[-FAIL_OUTPUT_TAIL:]
+            fail_output = output[-FAIL_OUTPUT_TAIL:]
             break
     _append_evidence(repo_root, stage, ok_all, results)
     if not ok_all:
@@ -69,13 +84,13 @@ def run_stage(
 def _git_rev(repo_root: Path) -> str:
     rev = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True, cwd=repo_root, check=False,
+        capture_output=True, encoding="utf-8", errors="replace", cwd=repo_root, check=False,
     ).stdout.strip()
     if not rev:
         return "unknown"
     dirty = subprocess.run(
         ["git", "status", "--porcelain"],
-        capture_output=True, text=True, cwd=repo_root, check=False,
+        capture_output=True, encoding="utf-8", errors="replace", cwd=repo_root, check=False,
     ).stdout.strip()
     return rev + ("+dirty" if dirty else "")
 

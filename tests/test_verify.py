@@ -3,6 +3,7 @@
 実 uv/ruff/pytest は呼ばず、ダミーコマンドを注入する。
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -86,16 +87,98 @@ def test_unknown_stage_exits_nonzero(monkeypatch):
     assert exc.value.code not in (0, None)
 
 
+def test_main_exit_code_on_pass(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["verify.py"])  # 引数なし → 既定の "quick"
+    monkeypatch.setattr(verify, "run_stage", lambda *a, **k: True)
+    with pytest.raises(SystemExit) as exc:
+        verify.main()
+    assert exc.value.code == 0
+
+
+def test_main_exit_code_on_fail(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["verify.py"])
+    monkeypatch.setattr(verify, "run_stage", lambda *a, **k: False)
+    with pytest.raises(SystemExit) as exc:
+        verify.main()
+    assert exc.value.code == 1
+
+
+def test_error_exit_code_fails_stage_even_with_inverted_ok_codes(tmp_path):
+    # git grep 流儀の ok_codes={1} でも、想定外の終了コード(エラー終了の2など)は失敗扱い
+    errors2 = verify.Check(
+        "leak", [PY, "-c", "import sys; sys.exit(2)"], ok_codes=frozenset({1})
+    )
+
+    assert verify.run_stage("quick", [errors2], repo_root=tmp_path) is False
+
+
+def test_oserror_records_evidence_and_fails(tmp_path, capsys):
+    missing = verify.Check("missing", ["/nonexistent/definitely-missing-binary-xyz"])
+
+    ok = verify.run_stage("quick", [missing], repo_root=tmp_path)
+
+    assert ok is False
+    (rec,) = _read_evidence(tmp_path)
+    assert rec["pass"] is False
+    (check,) = rec["checks"]
+    assert check == {"name": "missing", "ok": False, "ms": check["ms"]}
+    assert "/nonexistent/definitely-missing-binary-xyz" in capsys.readouterr().err
+
+
+def test_repo_root_default_points_at_repo_root():
+    assert verify.REPO_ROOT == Path(__file__).resolve().parent.parent
+
+
+def _extract_ci_run_steps(ci_text: str) -> list[str]:
+    """ci.yml の各ステップの `run:` 本文を、出現順のリストで返す。
+
+    2つの記法に対応する: ブロックスカラー(`run: |` の後、より深い字下げが続く行すべて)と
+    単一行スカラー(`run: <コマンド>`)。stdlib(re)のみで書く。
+    """
+    lines = ci_text.splitlines()
+    steps: list[str] = []
+    i = 0
+    while i < len(lines):
+        block_start = re.match(r"^(\s*)run:\s*\|\s*$", lines[i])
+        if block_start:
+            indent = len(block_start.group(1))
+            i += 1
+            block_lines = []
+            while i < len(lines) and (
+                lines[i].strip() == "" or len(lines[i]) - len(lines[i].lstrip()) > indent
+            ):
+                block_lines.append(lines[i])
+                i += 1
+            steps.append("\n".join(block_lines))
+            continue
+        single = re.match(r"^\s*run:\s*(.+)$", lines[i])
+        if single:
+            steps.append(single.group(1))
+        i += 1
+    return steps
+
+
 def test_quick_stage_mirrors_ci():
-    """spec §4: quick は CI と同じコマンド・同じ順序。片方を変えたらもう片方も変える。"""
+    """spec §4: quick は CI と同じコマンド・同じ順序。片方を変えたらもう片方も変える。
+
+    片方向(部分文字列が含まれるか)だけの検査だと、CI にステップが増えても・
+    フラグが変わっても・順序が入れ替わっても気付けない。CI の `run:` 本文を出現順に
+    全数抽出し、quick の3チェックと1対1・順序も一致させることで両方向にする。
+    """
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     names = [c.name for c in verify.STAGES["quick"]]
 
     assert names == ["leak", "lint", "tests"]
-    assert verify.LEAK_REGEX in ci
-    assert "uv run ruff check hooks tests scripts" in ci
-    assert "uv run pytest -q" in ci
     leak, lint, tests = verify.STAGES["quick"]
     assert leak.cmd[:3] == ["git", "grep", "-nP"] and leak.ok_codes == frozenset({1})
     assert lint.cmd == ["uv", "run", "ruff", "check", "hooks", "tests", "scripts"]
     assert tests.cmd == ["uv", "run", "pytest", "-q"]
+
+    run_steps = _extract_ci_run_steps(ci)
+    assert len(run_steps) == 3, f"CI の run ステップ数が想定と違う: {run_steps!r}"
+
+    leak_step, lint_step, tests_step = run_steps
+    assert f"git grep -nP '{verify.LEAK_REGEX}' --" in leak_step
+    assert re.search(r"\bif\b.*\bexit 1\b", leak_step, re.S), leak_step
+    assert lint_step.strip() == "uv run ruff check hooks tests scripts"
+    assert tests_step.strip() == "uv run pytest -q"
