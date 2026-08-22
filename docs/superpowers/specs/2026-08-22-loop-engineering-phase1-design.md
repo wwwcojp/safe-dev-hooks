@@ -64,8 +64,9 @@
 
 **他PJとの相違: `.loop/` は gitignore する。** このリポジトリは公開リポジトリ+CI があり、
 evidence はローカルの作業証跡、最終判定者は CI。公開履歴にローカル実行ログを載せない。
-(既存の `*.jsonl` ignore に加え `.loop/` を明示。将来 mutation baseline を入れるときは
-`!.loop/mutation-baseline.json` で例外追跡する)
+(既存の `*.jsonl` ignore に加え `.loop/` を明示。`.gitignore` がディレクトリ `.loop/` を除外している間は、
+その配下のファイルを `!` で再追跡することはできない — 将来 mutation baseline を入れるときは、
+無視パターンを `.loop/*` + `!.loop/mutation-baseline.json` に切り替えるか、baseline を `.loop/` の外に置く)
 
 ## 5. per-repo 設定 `.loop-hooks.json`
 
@@ -86,8 +87,13 @@ evidence はローカルの作業証跡、最終判定者は CI。公開履歴�
 
 ## 6. 保護(ユーザー手動 2件)
 
-以下は `safe-dev-hooks` 自身の `write_protected` により**エージェントは変更できない**(Edit/Write/Bash いずれも deny)。
-設計として「エージェントに回避できない」ことが目的なので、ユーザーが手で行う。
+以下は `safe-dev-hooks` 自身の `write_protected` により、Edit/Write と Bash の変異トークンでは deny される。
+ユーザーが手で行う。ただし `write_protected` は**予防層**であり、「エージェントがうっかりゲート自体を直してしまう」
+事故経路を閉じるためのもの。`hooks/config_change/config_guard.py` のドキュストリングにあるとおり、
+インタプリタレベルの書込(例: python heredoc でファイルを開いて書き戻す)や外部プロセス経由の変更は
+この予防層を素通りする既知の限界がある(検知は ConfigChange 層が担うが、`.loop-hooks.json` はその
+対象に含まれていない)。最終的な判定者は CI と人間によるブランチレビューであり、
+「ゲート設定を変えてゲートを通す」ことをしない、という指示自体は変わらない。
 
 ### 6.1 必須: `.claude-hooks.json` にゲート設定の書込保護を追加
 
@@ -203,3 +209,4 @@ news-collector の移植順序を踏襲する。各段階は独立に価値が�
 | `quick` の所要時間 | 約1秒 | 問題なし。テストが大幅に増えたら再計測 |
 | セッション異常終了 | dirty が残る/消える整合 | dirty はセッションを跨いで残るので次セッションの Stop で回収される(loop-hooks の設計) |
 | サブディレクトリを cwd にしたセッション | `.loop-hooks.json` が見つからず no-op | 既知の境界。このリポジトリはルートで作業する |
+| ランナー・`pyproject.toml` の改変によるゲート弱体化 | `scripts/verify.py`・`tests/test_verify.py`・`pyproject.toml`(CI と共有する pytest/ruff 設定)は通常のエージェント書込可能ファイル。`STAGES["quick"]` を薄くする、`pyproject.toml` に `addopts = "--ignore=tests/test_verify.py"` のような設定を足す、といった変更でローカルゲートを弱められる。`pyproject.toml` の改変は CI 側の同一設定も弱める | `write_protected` の対象にしない(ランナーは第2段階以降で育てる必要があり、`pyproject.toml` は開発依存追加などで正当に変更する)。バックストップは人間によるブランチレビュー(diff 確認)と CI |

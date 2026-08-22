@@ -9,6 +9,8 @@
 
 ### 検証ゲート(loop-hooks)
 
+これはメンテナー向けのローカル開発環境の設定です(`~/loop-hooks` はメンテナーのローカルにのみ導入された未公開プラグインで、外部から取得できません)。外部コントリビューターは有効化手順を無視してかまいません — `uv run python scripts/verify.py quick` は単体でも動作するので、PR前に手動で実行するだけで十分です。
+
 このリポジトリは loop-hooks(ローカルプラグイン `~/loop-hooks`)による「ターン終了時の検証ゲート」を前提に開発する。`.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンの終了時に `uv run python scripts/verify.py quick`(実ホームパスのリークチェック → `ruff check` → `pytest`。CI と同じコマンド・同じ順序)が強制され、失敗するとターンを終われない。結果は `.loop/evidence.jsonl`(gitignore)に1実行1行で記録される。
 
 - 手動で回すとき: `uv run python scripts/verify.py quick`(約1秒)

@@ -8,7 +8,7 @@
 
 2. **Bash コマンドやコミットメッセージに危険コマンドの字面・実ホームパスを書くと遮断される** — `bash_guard` は `rm -rf //` のような字面に(コミットメッセージ内であっても)反応し、`secrets_scan` は書込内容中の実ホームパス(`real-home-path`)に反応する。コミットメッセージや説明文で危険コマンドを例示するときは表現を変える。パスは常にプレースホルダーを使う(`.claude/rules/no-personal-paths.md`)。
 
-3. **ターン終了時に loop-hooks の検証ゲート(`scripts/verify.py quick`)で止められる** — `.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンは、終了時に leak → ruff → pytest が強制される。失敗したら**コードを直して再度終了する**。`.loop-hooks.json`・`.loop/state.json` は `.claude-hooks.json` の `write_protected_paths` で書込保護する対象(ユーザーが設定)。保護の有無にかかわらず、ゲート設定を変えて通そうとしない(保護は「エージェントに回避できない」ことが設計)。
+3. **ターン終了時に loop-hooks の検証ゲート(`scripts/verify.py quick`)で止められる** — `.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンは、終了時に leak → ruff → pytest が強制される。失敗したら**コードを直して再度終了する**。`.loop-hooks.json`・`.loop/state.json` は `.claude-hooks.json` の `write_protected_paths` で書込保護する対象(ユーザーが設定)。保護の有無にかかわらず、ゲート設定を変えて通そうとしない。write_protected は Edit/Write と Bash の変異トークンを塞ぐ**予防層**であり、「うっかりゲートを直してしまう」経路を閉じるためのもの — インタプリタレベルの書込(python heredoc で開いて書く等)は素通りする既知の限界があり、最終的な判定者は CI とブランチレビュー(人間)。
 
    **注意:** ゲートの dirty 判定は `Edit|Write` のみで、**項目 1 の Bash 経由の python 書込にはゲートが掛からない**。`hooks/`・`rules/` を変更する開発作業では、Bash 回避ではなく `CONTRIBUTING.md` の選択肢 1(プラグインを一時的に無効化して通常の Edit/Write を使う)を優先すること。Bash で書いた場合は自分で `uv run python scripts/verify.py quick` を回す。
 
