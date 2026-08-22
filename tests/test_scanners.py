@@ -1,6 +1,16 @@
 import json
+import os
 
 from hooks.lib import scanners
+
+# --- _resolve_config_path(純関数) ---
+
+def test_resolve_config_path_returns_candidate_str(tmp_path):
+    p = tmp_path / ".gitleaks.toml"
+    p.write_text("", encoding="utf-8")
+    result = scanners._resolve_config_path({}, str(tmp_path))
+    assert result == str(p)
+
 
 # --- _gitleaks_argv(純関数) ---
 
@@ -78,6 +88,44 @@ def test_argv_docker_config_mount(monkeypatch, tmp_path):
     assert "-c" in argv and "/tmp/gl.toml" in argv
 
 
+def test_argv_default_mode_is_auto_when_key_absent(monkeypatch):
+    monkeypatch.setattr(scanners.shutil, "which",
+                        lambda n, *a, **k: "/usr/bin/gitleaks" if n == "gitleaks" else None)
+    argv = scanners._gitleaks_argv({}, None)
+    assert argv is not None
+    assert argv[0] == "gitleaks"
+
+
+def test_argv_off_does_not_resolve_config(monkeypatch, tmp_path):
+    def boom(sc, cwd):
+        raise AssertionError("gitleaks=off のとき _resolve_config_path を呼んではいけない")
+    monkeypatch.setattr(scanners, "_resolve_config_path", boom)
+    assert scanners._gitleaks_argv({"gitleaks": "off"}, str(tmp_path)) is None
+
+
+def test_argv_auto_with_config_exact_list(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanners.shutil, "which",
+                        lambda n, *a, **k: "/usr/bin/gitleaks" if n == "gitleaks" else None)
+    p = tmp_path / "gl.toml"
+    p.write_text("", encoding="utf-8")
+    argv = scanners._gitleaks_argv({"gitleaks": "auto", "gitleaks_config": str(p)}, None)
+    assert argv == ["gitleaks", *scanners._COMMON_FLAGS, "-c", str(p)]
+
+
+def test_argv_docker_with_config_exact_list(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanners.shutil, "which",
+                        lambda n, *a, **k: "/usr/bin/docker" if n == "docker" else None)
+    p = tmp_path / "gl.toml"
+    p.write_text("", encoding="utf-8")
+    argv = scanners._gitleaks_argv({"gitleaks": "docker", "gitleaks_config": str(p)}, None)
+    expected = [
+        "docker", "run", "--rm", "-i",
+        "-v", f"{os.path.abspath(str(p))}:/tmp/gl.toml:ro",
+        "--", scanners.DEFAULT_IMAGE, *scanners._COMMON_FLAGS, "-c", "/tmp/gl.toml",
+    ]
+    assert argv == expected
+
+
 # --- _run_gitleaks(stub 実行ファイル) ---
 
 def _make_stub(tmp_path, stdout, code):
@@ -115,6 +163,48 @@ def test_run_gitleaks_bad_json_fail_open(tmp_path):
     assert scanners._run_gitleaks([stub], "x") == []
 
 
+def test_run_gitleaks_calls_subprocess_with_expected_kwargs(monkeypatch):
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = "[]"
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return FakeResult()
+
+    monkeypatch.setattr(scanners.subprocess, "run", fake_run)
+    scanners._run_gitleaks(["gitleaks", "stdin"], "some-input-text")
+    assert captured["argv"] == ["gitleaks", "stdin"]
+    assert captured["input"] == "some-input-text"
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
+    assert captured["timeout"] == scanners.GITLEAKS_TIMEOUT_SEC
+
+
+def test_run_gitleaks_skips_non_dict_entries_but_continues(tmp_path):
+    payload = json.dumps([
+        "not-a-dict",
+        {"RuleID": "generic-api-key", "Secret": "AFTER-VALUE"},
+    ])
+    stub = _make_stub(tmp_path, payload, 1)
+    out = scanners._run_gitleaks([stub], "x")
+    assert out == [{"rule": "gitleaks:generic-api-key", "match": "AFTER-VALUE"}]
+
+
+def test_run_gitleaks_requires_rule_id_and_secret(tmp_path):
+    payload = json.dumps([
+        {"RuleID": "only-rule"},
+        {"Secret": "only-secret"},
+        {"RuleID": "both-rule", "Secret": "both-secret"},
+    ])
+    stub = _make_stub(tmp_path, payload, 1)
+    out = scanners._run_gitleaks([stub], "x")
+    assert out == [{"rule": "gitleaks:both-rule", "match": "both-secret"}]
+
+
 # --- scan_secrets(union / floor 不変 / dedup) ---
 
 def test_scan_secrets_off_floor_only():
@@ -141,6 +231,26 @@ def test_scan_secrets_floor_invariant_when_gitleaks_absent(monkeypatch):
     akia = "AKIA" + "Z" * 16
     out = scanners.scan_secrets(f"key={akia}", {"gitleaks": "auto"}, None)
     assert [f["rule"] for f in out] == ["aws-access-key"]
+
+
+def test_scan_secrets_passes_cwd_argv_text_through(monkeypatch):
+    captured = {}
+
+    def fake_gitleaks_argv(sc, cwd):
+        captured["cwd"] = cwd
+        return ["FAKE_ARGV"]
+
+    def fake_run_gitleaks(argv, text):
+        captured["argv"] = argv
+        captured["text"] = text
+        return []
+
+    monkeypatch.setattr(scanners, "_gitleaks_argv", fake_gitleaks_argv)
+    monkeypatch.setattr(scanners, "_run_gitleaks", fake_run_gitleaks)
+    scanners.scan_secrets("hello-world-text", {"gitleaks": "auto"}, "/some/cwd")
+    assert captured["cwd"] == "/some/cwd"
+    assert captured["argv"] == ["FAKE_ARGV"]
+    assert captured["text"] == "hello-world-text"
 
 
 def test_scan_secrets_dedup(monkeypatch):

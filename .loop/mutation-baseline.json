@@ -3,8 +3,8 @@
     "hooks/lib/config.py": 77.0,
     "hooks/lib/hook_io.py": 98.7,
     "hooks/lib/patterns.py": 95.5,
-    "hooks/lib/scanners.py": 87.2,
+    "hooks/lib/scanners.py": 99.3,
     "hooks/pre_tool_use/bash_guard.py": 66.3
   },
-  "updated": "2026-08-22T12:50:36Z"
+  "updated": "2026-08-22T12:56:52Z"
 }
