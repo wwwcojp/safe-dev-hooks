@@ -327,3 +327,24 @@ def test_main_all_runs_mutation_after_quick(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         verify.main()
     assert exc.value.code == 0 and calls == ["quick", "mutation"]
+
+
+def test_run_mutmut_starts_from_a_clean_mutants_dir(tmp_path, monkeypatch):
+    stale = tmp_path / "mutants" / "stale.meta"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(verify, "MUTMUT_CMD", [PY, "-c", "print('ran')"])
+
+    code, output = verify._run_mutmut(tmp_path)
+
+    assert (code, output) == (0, "ran\n")
+    assert not (tmp_path / "mutants").exists()
+
+
+def test_run_mutmut_reports_oserror(tmp_path, monkeypatch):
+    monkeypatch.setattr(verify, "MUTMUT_CMD", ["/nonexistent/definitely-missing-binary-xyz"])
+
+    code, output = verify._run_mutmut(tmp_path)
+
+    assert code == 1
+    assert "/nonexistent/definitely-missing-binary-xyz" in output

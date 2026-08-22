@@ -10,6 +10,7 @@ stdlib のみで書く(hooks/ と同じ流儀)。
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -173,6 +174,11 @@ def check_mutation_baseline(
 
 
 def _run_mutmut(repo_root: Path) -> tuple[int, str]:
+    # mutmut はソース関数のハッシュが変わらない限り mutants/*.py.meta の判定をキャッシュから
+    # 再利用する。テストだけを変更(追加・弱体化・削除)した場合はソース側のハッシュが不変なので
+    # 再検査されず、古い判定(killed/survived)が残ったままラチェットを誤判定しうる。
+    # そのため毎回 mutants/ を削除してフル実行する(~10〜30秒。mutation は Stop ゲート対象外)。
+    shutil.rmtree(Path(repo_root) / "mutants", ignore_errors=True)
     try:
         proc = subprocess.run(
             MUTMUT_CMD, capture_output=True, encoding="utf-8", errors="replace",
