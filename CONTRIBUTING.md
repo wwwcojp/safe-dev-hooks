@@ -9,10 +9,10 @@
 
 ### 検証ゲート(loop-hooks)
 
-このリポジトリは [loop-hooks](~/loop-hooks) プラグインによる「ターン終了時の検証ゲート」を前提に開発する。`.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンの終了時に `uv run python scripts/verify.py quick`(実ホームパスのリークチェック → `ruff check` → `pytest`。CI と同じコマンド・同じ順序)が強制され、失敗するとターンを終われない。結果は `.loop/evidence.jsonl`(gitignore)に1実行1行で記録される。
+このリポジトリは loop-hooks(ローカルプラグイン `~/loop-hooks`)による「ターン終了時の検証ゲート」を前提に開発する。`.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンの終了時に `uv run python scripts/verify.py quick`(実ホームパスのリークチェック → `ruff check` → `pytest`。CI と同じコマンド・同じ順序)が強制され、失敗するとターンを終われない。結果は `.loop/evidence.jsonl`(gitignore)に1実行1行で記録される。
 
 - 手動で回すとき: `uv run python scripts/verify.py quick`(約1秒)
-- 設定は `.loop-hooks.json`。ゲート設定と `.loop/state.json` は書き込み保護されており、エージェントは変更できない(ゲートに詰まったらコードを直す)
+- 設定は `.loop-hooks.json`。ゲート設定と `.loop/state.json` は `.claude-hooks.json` の `secrets_guard.write_protected_paths` で書き込み保護する(ユーザーが設定。設計書 §6)。ゲートに詰まったらコードを直す — ゲート設定を変えて通さない
 - 有効化はプロジェクト単位: `.claude/settings.local.json` の `enabledPlugins` に `"loop-hooks@loop-hooks": true`(設計: `docs/superpowers/specs/2026-08-22-loop-engineering-phase1-design.md`)
 
 ### ドッグフーディング時の注意(このリポジトリ自身のHooksを有効にして開発する場合)
