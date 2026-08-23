@@ -146,8 +146,8 @@ def test_enum_typo_falls_back_to_safe_default(monkeypatch, tmp_path):
     assert cfg["exfil_guard"]["mode"] == "detect"
     assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
     assert cfg["_errors"] == [
-        "exfil_guard.mode: 未知の値 'detct' のため既定値を使用します",
-        "exfil_guard.categories.credentials: 未知の値 'denny' のため既定値を使用します",
+        "exfil_guard.mode: 不正な値 'detct' のため無視しました(下位層の値を使用)",
+        "exfil_guard.categories.credentials: 不正な値 'denny' のため無視しました(下位層の値を使用)",
     ]
 
 
@@ -191,7 +191,7 @@ def test_protected_branches_invalid_type_falls_back(tmp_path, monkeypatch):
         "main", "master", "develop", "release", "production"
     ]
     assert cfg["_errors"] == [
-        "bash_guard.protected_branches: 文字列リストでないため既定値を使用します"
+        "bash_guard.protected_branches: 不正な値 'main' のため無視しました(下位層の値を使用)"
     ]
 
 
@@ -203,7 +203,7 @@ def test_write_protected_paths_invalid_type_falls_back(tmp_path, monkeypatch):
     cfg = config.load_config(str(tmp_path))
     assert cfg["secrets_guard"]["write_protected_paths"] == []
     assert cfg["_errors"] == [
-        "secrets_guard.write_protected_paths: 文字列リストでないため既定値を使用します"
+        "secrets_guard.write_protected_paths: 不正な値 'x' のため無視しました(下位層の値を使用)"
     ]
 
 
@@ -242,7 +242,7 @@ def test_scanners_config_type_fallback(monkeypatch, tmp_path):
     cfg = config.load_config(str(tmp_path))
     assert cfg["scanners"]["gitleaks_config"] is None
     assert cfg["_errors"] == [
-        "scanners.gitleaks_config: 文字列またはnullでないため既定値を使用します"
+        "scanners.gitleaks_config: 不正な値 123 のため無視しました(下位層の値を使用)"
     ]
 
 
@@ -254,7 +254,7 @@ def test_scanners_gitleaks_image_type_fallback(monkeypatch, tmp_path):
     cfg = config.load_config(str(tmp_path))
     assert cfg["scanners"]["gitleaks_image"] == config.DEFAULTS["scanners"]["gitleaks_image"]
     assert cfg["_errors"] == [
-        "scanners.gitleaks_image: 文字列でないため既定値を使用します"
+        "scanners.gitleaks_image: 不正な値 123 のため無視しました(下位層の値を使用)"
     ]
 
 
@@ -462,3 +462,51 @@ def test_unknown_category_key_absent_from_lower_layer_is_dropped(monkeypatch, tm
     )
     assert "unknown" not in cfg["exfil_guard"]["categories"]
     assert cfg["exfil_guard"]["categories"]["credentials"] == "deny"
+    # メッセージも厳密に(戻す先が無いので「下位層の値を使用」は付かない)
+    assert cfg["_errors"] == [
+        "exfil_guard.categories.unknown: 不正な値 'bogus' のため無視しました"
+    ]
+
+
+# ---- 層ごと縮退(8cd921d)の補強: mutation トリアージで見つかった穴 ----
+
+
+def test_no_config_files_returns_nested_copies_not_defaults(monkeypatch, tmp_path):
+    """設定ファイルが1つも無い経路でも、ネスト辞書が DEFAULTS と別名化していない。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    cfg = config.load_config(str(tmp_path))
+    cfg["exfil_guard"]["categories"]["credentials"] = "off"
+    cfg["bash_guard"]["protected_branches"].append("polluted")
+    assert config.DEFAULTS["exfil_guard"]["categories"]["credentials"] == "deny"
+    assert "polluted" not in config.DEFAULTS["bash_guard"]["protected_branches"]
+
+
+def test_top_level_type_confusion_message_names_key_and_value(monkeypatch, tmp_path):
+    """セクション丸ごとの型すり替えは、キー名と不正値を含む文言で下位層へ戻す。"""
+    cfg = _with_layers(
+        monkeypatch, tmp_path,
+        {"bash_guard": {"protected_branches": ["trunk"]}},
+        {"bash_guard": 0},
+    )
+    assert cfg["bash_guard"]["protected_branches"] == ["trunk"]  # 下位層(グローバル)の値
+    assert cfg["_errors"] == ["bash_guard: 不正な値 0 のため無視しました(下位層の値を使用)"]
+
+
+def test_unexpected_error_fallback_returns_nested_copies_not_defaults(monkeypatch, tmp_path):
+    """想定外例外の縮退経路(load_config の except)でもネスト辞書が DEFAULTS と別名化しない。"""
+    def boom(cwd=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(config, "_load_config", boom)
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["_errors"] == ["設定の読み込みに失敗したため既定値を使用します: boom"]
+    cfg["exfil_guard"]["categories"]["credentials"] = "off"
+    assert config.DEFAULTS["exfil_guard"]["categories"]["credentials"] == "deny"
+
+
+def test_non_dict_categories_message_names_key_and_value(monkeypatch, tmp_path):
+    cfg = _with_layers(monkeypatch, tmp_path, {}, {"exfil_guard": {"categories": "x"}})
+    assert cfg["exfil_guard"]["categories"] == config.DEFAULTS["exfil_guard"]["categories"]
+    assert cfg["_errors"] == [
+        "exfil_guard.categories: 不正な値 'x' のため無視しました(下位層の値を使用)"
+    ]

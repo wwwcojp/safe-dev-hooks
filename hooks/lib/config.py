@@ -109,6 +109,8 @@ def _validate(cfg: dict, fallback: dict, errors: list) -> dict:
     ときの縮退先はビルトイン既定ではなく直下の層である。最下層へ戻すと、中間層
     (グローバル設定)でユーザーが行った強化までプロジェクト設定から消せてしまう。
     型のスキーマは`DEFAULTS`から取り、採用する値は`fallback`から取る。
+    `fallback` は常に検証済みの完全な設定(初層は DEFAULTS の deepcopy、以降は前層の
+    検証結果)なので、全キーが正しい型で存在することを前提に直接参照する。
     """
     def revert(container: dict, key, source, label: str, value) -> None:
         errors.append(f"{label}: 不正な値 {value!r} のため無視しました(下位層の値を使用)")
@@ -116,15 +118,12 @@ def _validate(cfg: dict, fallback: dict, errors: list) -> dict:
 
     for key, default_value in DEFAULTS.items():
         if not isinstance(cfg.get(key), type(default_value)):
-            revert(cfg, key, fallback.get(key, default_value), key, cfg.get(key))
+            revert(cfg, key, fallback[key], key, cfg.get(key))
     for (section, sub_key), allowed in _ENUM_KEYS.items():
         value = cfg[section].get(sub_key)
         if value not in allowed:
-            source = fallback.get(section, {}).get(sub_key, DEFAULTS[section][sub_key])
-            revert(cfg[section], sub_key, source, f"{section}.{sub_key}", value)
-    fallback_categories = fallback.get("exfil_guard", {}).get("categories")
-    if not isinstance(fallback_categories, dict):
-        fallback_categories = DEFAULTS["exfil_guard"]["categories"]
+            revert(cfg[section], sub_key, fallback[section][sub_key], f"{section}.{sub_key}", value)
+    fallback_categories = fallback["exfil_guard"]["categories"]
     categories = cfg["exfil_guard"].get("categories")
     if not isinstance(categories, dict):
         revert(
@@ -147,17 +146,14 @@ def _validate(cfg: dict, fallback: dict, errors: list) -> dict:
     ):
         value = cfg[section].get(sub_key)
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
-            source = fallback.get(section, {}).get(sub_key, DEFAULTS[section][sub_key])
-            revert(cfg[section], sub_key, source, f"{section}.{sub_key}", value)
+            revert(cfg[section], sub_key, fallback[section][sub_key], f"{section}.{sub_key}", value)
     image = cfg["scanners"].get("gitleaks_image")
     if not isinstance(image, str):
-        source = fallback.get("scanners", {}).get(
-            "gitleaks_image", DEFAULTS["scanners"]["gitleaks_image"]
-        )
+        source = fallback["scanners"]["gitleaks_image"]
         revert(cfg["scanners"], "gitleaks_image", source, "scanners.gitleaks_image", image)
     gitleaks_config = cfg["scanners"].get("gitleaks_config")
     if gitleaks_config is not None and not isinstance(gitleaks_config, str):
-        source = fallback.get("scanners", {}).get("gitleaks_config")
+        source = fallback["scanners"]["gitleaks_config"]
         revert(
             cfg["scanners"], "gitleaks_config", source,
             "scanners.gitleaks_config", gitleaks_config,
