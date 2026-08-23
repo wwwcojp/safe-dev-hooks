@@ -1,11 +1,11 @@
 {
   "files": {
-    "hooks/lib/config.py": 99.1,
+    "hooks/lib/config.py": 99.2,
     "hooks/lib/hook_io.py": 98.7,
     "hooks/lib/patterns.py": 95.5,
     "hooks/lib/scanners.py": 99.3,
     "hooks/lib/trust.py": 97.3,
     "hooks/pre_tool_use/bash_guard.py": 100.0
   },
-  "updated": "2026-08-23T12:12:45Z"
+  "updated": "2026-08-23T12:33:27Z"
 }

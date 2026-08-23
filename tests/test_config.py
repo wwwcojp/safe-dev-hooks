@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from helpers import approve_project
+from helpers import approve_project, isolated_home_env
 
 from hooks.lib import config, trust
 
@@ -64,7 +64,7 @@ def test_broken_global_json_does_not_block_project_layer(monkeypatch, tmp_path):
     )
     cfg = config.load_config(str(proj))
     assert cfg["exfil_guard"]["mode"] == "detect"  # 承認機構(global)が壊れ非承認
-    assert len(cfg["_errors"]) == 1
+    assert len(cfg["_errors"]) == 1 and cfg["_errors"][0].startswith(f"{g}: ")
     assert len(cfg["_notices"]) == 1  # project 層の処理まで到達した証跡
 
 
@@ -94,7 +94,7 @@ def test_non_dict_global_config_does_not_block_project_layer(monkeypatch, tmp_pa
     )
     cfg = config.load_config(str(proj))
     assert cfg["exfil_guard"]["mode"] == "detect"  # 承認機構(global)が不正型で非承認
-    assert len(cfg["_errors"]) == 1
+    assert cfg["_errors"] == [f"{g}: オブジェクトではありません"]
     assert len(cfg["_notices"]) == 1  # project 層の処理まで到達した証跡
 
 
@@ -372,7 +372,7 @@ def test_malformed_config_does_not_disable_deny_layer(tmp_path):
     }
     r = subprocess.run(
         [sys.executable, str(script)], input=json.dumps(event),
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=30, env=isolated_home_env(tmp_path / "home"),
     )
     assert r.returncode == 0
     out = json.loads(r.stdout)
@@ -700,3 +700,48 @@ def test_unexpected_error_fallback_has_empty_notices(monkeypatch):
     monkeypatch.setattr(config, "_load_config", boom)
     cfg = config.load_config(None)
     assert cfg["_notices"] == []
+
+
+# --- 読取失敗(OSError)は層ごとに記録し、次の層の処理は止めない ---
+
+
+def _raise_read_bytes_for(monkeypatch, target):
+    """target だけ Path.read_bytes が PermissionError を送出するようにする。"""
+    original = Path.read_bytes
+
+    def fake(self):
+        if self == target:
+            raise PermissionError("denied")
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", fake)
+
+
+def test_unreadable_project_layer_records_error_and_keeps_lower_layers(monkeypatch, tmp_path):
+    proj = _proj_with(tmp_path, json.dumps({"quality_gate": {"mode": "block"}}))
+    approve_project(monkeypatch, tmp_path / "global.json", proj,
+                    global_cfg={"quality_gate": {"mode": "warn"}})
+    _raise_read_bytes_for(monkeypatch, proj / ".claude-hooks.json")
+    cfg = config.load_config(str(proj))
+    assert cfg["_errors"] == [f"{proj / '.claude-hooks.json'}: denied"]
+    assert cfg["_notices"] == []  # 読めなければ承認判定にも進まない(通知なし)
+    assert cfg["quality_gate"]["mode"] == "warn"  # グローバル層はそのまま生きる
+
+
+def test_unreadable_global_layer_records_error_and_still_gates_project(monkeypatch, tmp_path):
+    proj = _proj_with(tmp_path, json.dumps({"exfil_guard": {"mode": "always"}}))
+    global_path = tmp_path / "global.json"
+    global_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    _raise_read_bytes_for(monkeypatch, global_path)
+    cfg = config.load_config(str(proj))
+    assert cfg["_errors"] == [f"{global_path}: denied"]
+    # グローバル層が読めなくても処理はプロジェクト層へ進む(承認が無いので非承認通知が出る)
+    assert len(cfg["_notices"]) == 1 and "未承認" in cfg["_notices"][0]
+    assert cfg["exfil_guard"]["mode"] == "detect"
+
+
+def test_no_project_file_means_no_trust_notice(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["_notices"] == [] and cfg["_errors"] == []

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from helpers import load_hook
+from helpers import approve_project, isolated_home_env, load_hook
 
 from hooks.lib import config
 
@@ -178,7 +178,7 @@ def test_blackbox_subprocess_deny(tmp_path):
     event = {"tool_name": "Bash", "cwd": str(tmp_path), "tool_input": {"command": "rm -rf /"}}
     r = subprocess.run(
         [sys.executable, str(script)], input=json.dumps(event),
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=30, env=isolated_home_env(tmp_path / "home"),
     )
     assert r.returncode == 0
     out = json.loads(r.stdout)
@@ -412,11 +412,13 @@ def test_original_command_is_checked_alongside_expansion():
 
 
 def _run_main(monkeypatch, capsys, tmp_path, event, project_cfg=None):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "absent-global.json")
     if project_cfg is not None:
         (tmp_path / ".claude-hooks.json").write_text(
             json.dumps(project_cfg), encoding="utf-8"
         )
+        approve_project(monkeypatch, tmp_path / "absent-global.json", tmp_path)
+    else:
+        monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "absent-global.json")
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
     with pytest.raises(SystemExit) as excinfo:
         bash_guard.main()
@@ -554,7 +556,7 @@ def test_main_fails_close_when_evaluate_raises(monkeypatch, capsys, tmp_path):
 def test_main_appends_config_error_warning_to_decision(monkeypatch, capsys, tmp_path):
     # 壊れた設定ファイルがあっても判定は出し、警告を systemMessage に合成する
     (tmp_path / ".claude-hooks.json").write_text("{broken", encoding="utf-8")
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "absent-global.json")
+    approve_project(monkeypatch, tmp_path / "absent-global.json", tmp_path)
     monkeypatch.setattr(
         "sys.stdin", io.StringIO(json.dumps(_bash_event("rm -rf /", tmp_path)))
     )

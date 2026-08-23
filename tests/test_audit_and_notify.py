@@ -2,7 +2,7 @@ import io
 import json
 
 import pytest
-from helpers import load_hook
+from helpers import approve_project, load_hook
 
 from hooks.lib import config
 
@@ -51,17 +51,17 @@ def test_audit_truncates_large_input(monkeypatch, tmp_path, capsys):
 
 
 def test_audit_never_crashes_on_unwritable_path(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"audit_log": {"path": "/proc/forbidden"}}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": str(tmp_path)}
     _run(audit, monkeypatch, event, capsys)  # SystemExit(0) すれば成功
 
 
 def test_audit_survives_non_dict_section(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text('{"audit_log": true}', encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     event = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": str(tmp_path)}
     out = _run(audit, monkeypatch, event, capsys)
     assert out is not None and "systemMessage" in out
@@ -92,10 +92,10 @@ def test_notify_auto_desktop_success_outputs_nothing(monkeypatch, tmp_path, caps
 
 
 def test_notify_method_bell_skips_desktop(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
 
     def _boom(msg):
         raise AssertionError("method=bellではデスクトップチェーンを呼ばない")
@@ -108,11 +108,11 @@ def test_notify_method_bell_skips_desktop(monkeypatch, tmp_path, capsys):
 
 def test_notify_command_skips_desktop(monkeypatch, tmp_path, capsys):
     """notify.command設定時はmethodに関わらずコマンドが最優先(互換性)。"""
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     marker = tmp_path / "notified.txt"
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"notify": {"command": f"touch {marker}"}}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
 
     def _boom(msg):
         raise AssertionError("command設定時はデスクトップチェーンを呼ばない")
@@ -125,10 +125,10 @@ def test_notify_command_skips_desktop(monkeypatch, tmp_path, capsys):
 
 
 def test_notify_disabled_outputs_nothing(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"notify": {"enabled": False}}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
 
     def _boom(msg):
         raise AssertionError("enabled=falseでは何も実行しない")
@@ -140,11 +140,11 @@ def test_notify_disabled_outputs_nothing(monkeypatch, tmp_path, capsys):
 
 
 def test_notify_custom_command(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     marker = tmp_path / "notified.txt"
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"notify": {"command": f"touch {marker}"}}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     event = {
         "hook_event_name": "Notification",
         "cwd": str(tmp_path),

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from helpers import load_hook
+from helpers import isolated_home_env, load_hook
 
 secrets_guard = load_hook("pre_tool_use/secrets_guard.py")
 
@@ -169,8 +169,9 @@ def test_deny_survives_enabled_false_blackbox(tmp_path):
               / "hooks" / "pre_tool_use" / "secrets_guard.py")
     event = {"tool_name": "Read", "cwd": str(tmp_path),
              "tool_input": {"file_path": "/proj/.env"}}
+    env = isolated_home_env(tmp_path / "home", approve=tmp_path)
     r = subprocess.run([sys.executable, str(script)], input=json.dumps(event),
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, timeout=30, env=env)
     assert r.returncode == 0
     out = json.loads(r.stdout)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"

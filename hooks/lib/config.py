@@ -83,44 +83,57 @@ def load_config(cwd: str | None = None) -> dict:
         return cfg
 
 
+def _read_layer(path: Path, errors: list) -> bytes | None:
+    """層のファイルを生バイト列で読む。無ければ None、読めなければ errors に記録して None。"""
+    try:
+        if not path.is_file():
+            return None
+        return path.read_bytes()
+    except OSError as exc:
+        errors.append(f"{path}: {exc}")
+        return None
+
+
+def _apply_layer(cfg: dict, path: Path, raw: bytes, errors: list) -> dict:
+    """1層分の生バイト列を解析・マージ・検証して新しい cfg を返す。解析できなければ cfg のまま。"""
+    try:
+        # 不正UTF-8は UnicodeDecodeError(ValueError)、JSON構文エラーは
+        # JSONDecodeError(ValueError)、深いネストは RecursionError を送出する。
+        # bytes.decode() の既定は言語仕様で utf-8(open() と違いロケール非依存)。
+        data = json.loads(raw.decode())
+    except (ValueError, RecursionError) as exc:
+        errors.append(f"{path}: {exc}")
+        return cfg
+    if not isinstance(data, dict):
+        errors.append(f"{path}: オブジェクトではありません")
+        return cfg
+    # 層ごとにマージ直後へ検証を挟む。不正値の縮退先は最下層(ビルトイン既定)
+    # ではなく「その層をマージする前の状態」= 直下の層である。
+    # deepcopyは _merge が未変更セクションを base と共有するための別名化を断つ。
+    return _validate(copy.deepcopy(_merge(cfg, data)), cfg, errors)
+
+
 def _load_config(cwd: str | None = None) -> dict:
     cfg = copy.deepcopy(DEFAULTS)
     errors: list[str] = []
     notices: list[str] = []
+    # グローバル層: ユーザー自身の設定。読めれば無条件にマージする。
+    raw = _read_layer(GLOBAL_CONFIG_PATH, errors)
+    if raw is not None:
+        cfg = _apply_layer(cfg, GLOBAL_CONFIG_PATH, raw, errors)
+    # プロジェクト層: 信頼できない入力。グローバル層の検証後に承認を判定し、
+    # 非承認なら JSON として解析しない(ハッシュ計算のため生バイト列だけ読む)。
+    # 承認済みなら手順で読んだバイト列そのものを解析する(再オープンしない)。
     project_path = Path(cwd or ".") / PROJECT_CONFIG_NAME
-    for path in (GLOBAL_CONFIG_PATH, project_path):
-        try:
-            if not path.is_file():
-                continue
-            raw = path.read_bytes()
-        except OSError as exc:
-            errors.append(f"{path}: {exc}")
-            continue
-        if path is project_path:
-            # プロジェクト層は信頼できない入力。グローバル層の検証後に承認を判定し、
-            # 非承認なら JSON として解析しない(ハッシュ計算のため生バイト列だけ読む)。
-            verdict = trust.gate(
-                raw, cwd, cfg["trusted_projects"],
-                trust.cooldown_seconds(cfg["notice_cooldown_sec"]),
-            )
-            notices.extend(verdict.notices)
-            if not verdict.adopt:
-                continue
-        try:
-            # 不正UTF-8は UnicodeDecodeError(ValueError)、JSON構文エラーは
-            # JSONDecodeError(ValueError)、深いネストは RecursionError を送出する。
-            # 承認済みなら手順で読んだバイト列そのものを解析する(再オープンしない)
-            data = json.loads(raw.decode("utf-8"))
-        except (ValueError, RecursionError) as exc:
-            errors.append(f"{path}: {exc}")
-            continue
-        if not isinstance(data, dict):
-            errors.append(f"{path}: オブジェクトではありません")
-            continue
-        # 層ごとにマージ直後へ検証を挟む。不正値の縮退先は最下層(ビルトイン既定)
-        # ではなく「その層をマージする前の状態」= 直下の層である。
-        # deepcopyは _merge が未変更セクションを base と共有するための別名化を断つ。
-        cfg = _validate(copy.deepcopy(_merge(cfg, data)), cfg, errors)
+    raw = _read_layer(project_path, errors)
+    if raw is not None:
+        verdict = trust.gate(
+            raw, cwd, cfg["trusted_projects"],
+            trust.cooldown_seconds(cfg["notice_cooldown_sec"]),
+        )
+        notices.extend(verdict.notices)
+        if verdict.adopt:
+            cfg = _apply_layer(cfg, project_path, raw, errors)
     cfg["_errors"] = errors
     cfg["_notices"] = notices
     return cfg

@@ -2,7 +2,7 @@ import io
 import json
 
 import pytest
-from helpers import load_hook
+from helpers import approve_project, load_hook
 
 from hooks.lib import config
 
@@ -48,17 +48,17 @@ def test_clean_write_passes(monkeypatch, tmp_path, capsys):
     assert _run_main(monkeypatch, event, capsys) is None
 
 
-def _write_project_config(tmp_path, custom_patterns):
+def _write_project_config(monkeypatch, tmp_path, custom_patterns):
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"secrets_scan": {"custom_patterns": custom_patterns}}),
         encoding="utf-8",
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
 
 
 def test_custom_pattern_blocks_write(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     _write_project_config(
-        tmp_path, [{"name": "internal-host", "regex": r"\binternal\.example\b"}]
+        monkeypatch, tmp_path, [{"name": "internal-host", "regex": r"\binternal\.example\b"}]
     )
     event = {
         "tool_name": "Write",
@@ -71,9 +71,8 @@ def test_custom_pattern_blocks_write(monkeypatch, tmp_path, capsys):
 
 
 def test_custom_pattern_clean_write_passes(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     _write_project_config(
-        tmp_path, [{"name": "internal-host", "regex": r"\binternal\.example\b"}]
+        monkeypatch, tmp_path, [{"name": "internal-host", "regex": r"\binternal\.example\b"}]
     )
     event = {
         "tool_name": "Write",
@@ -84,9 +83,8 @@ def test_custom_pattern_clean_write_passes(monkeypatch, tmp_path, capsys):
 
 
 def test_custom_pattern_and_builtin_both_apply(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     _write_project_config(
-        tmp_path, [{"name": "internal-host", "regex": r"\binternal\.example\b"}]
+        monkeypatch, tmp_path, [{"name": "internal-host", "regex": r"\binternal\.example\b"}]
     )
     event = {
         "tool_name": "Write",
@@ -99,8 +97,7 @@ def test_custom_pattern_and_builtin_both_apply(monkeypatch, tmp_path, capsys):
 
 
 def test_invalid_custom_pattern_fails_open(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
-    _write_project_config(tmp_path, [{"name": "regex-missing"}])
+    _write_project_config(monkeypatch, tmp_path, [{"name": "regex-missing"}])
     event = {
         "tool_name": "Write",
         "cwd": str(tmp_path),
