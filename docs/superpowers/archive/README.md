@@ -18,3 +18,6 @@
 - `2026-07-03-safe-dev-hooks.md` — 初期 8 Hooks(14タスク)の実装計画。恒久記録は `docs/superpowers/2026-07-05-handoff.md`。
 - `2026-07-16-notify-desktop-integration.md` — notify デスクトップ通知統合(0.3.0)。
 - `2026-07-18-hooks-hardening.md` — ガードのハードニング(0.4.0)。
+- `2026-08-22-loop-engineering-phase1.md` — 検証ゲート(`scripts/verify.py quick`、loop-hooks)の導入。設計は `specs/2026-08-22-loop-engineering-phase1-design.md`。
+- `2026-08-22-loop-engineering-phase2-mutation.md` — mutation score のラチェット導入。設計は `specs/2026-08-22-loop-engineering-phase2-mutation-design.md`、実測は `specs/2026-08-22-mutation-spike-results.md`。
+- `2026-08-23-project-config-trust-optin.md` — プロジェクト設定のオプトイン信頼(0.7.0)。設計は `specs/2026-07-26-project-config-trust-optin-design.md`(第4版)。
