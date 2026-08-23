@@ -134,11 +134,14 @@ def test_load_config_returns_independent_copy_of_defaults(monkeypatch, tmp_path)
 
 
 def test_type_mismatch_reset_does_not_alias_defaults(monkeypatch, tmp_path):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    # 承認が要る(0.7.0)。承認しないとプロジェクト層が解析されず、検証する revert 経路に
+    # 到達しないまま「cfg は DEFAULTS の deepcopy のまま」で通ってしまう(空回りする)。
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"exfil_guard": "not-a-dict"}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path, pinned=True)
     cfg = config.load_config(str(tmp_path))
+    assert cfg["_errors"]  # revert が実際に走った証跡
     assert cfg["exfil_guard"] == config.DEFAULTS["exfil_guard"]
     assert cfg["exfil_guard"]["categories"] is not config.DEFAULTS["exfil_guard"]["categories"]
     cfg["exfil_guard"]["categories"]["custom"] = "mutated"

@@ -273,3 +273,40 @@ def test_write_protected_uses_event_cwd_not_process_cwd():
     v = secrets_guard.evaluate(
         _event("Bash", command="echo x > .loop/state.json", cwd="/home/alice/other"), ABS_CFG)
     assert v is None
+
+
+# ---- 信頼状態ファイル($HOME/.claude/safe-dev-hooks-state.json)の書込保護(0.7.0) ----
+# unpinned_seen はピン留めなし承認での内容変化を1度だけ通知するための唯一の記録で、
+# 先回りして書き換えられると「変わった」通知が黙る。notice_last も未承認リマインダを
+# 黙らせられる。パススコープ付き(`*/.claude/…`)で、無関係な同名ファイルは巻き込まない。
+
+_STATE = "/home/alice/.claude/safe-dev-hooks-state.json"
+
+
+def test_write_protected_trust_state_file_denied():
+    for path in [_STATE, "/home/alice/.claude/safe-dev-hooks-state.json"]:
+        for tool in ("Write", "Edit"):
+            v = secrets_guard.evaluate(_event(tool, file_path=path), CFG)
+            assert v is not None and v["decision"] == "deny", (tool, path)
+
+
+def test_write_protected_trust_state_bash_mutation_denied():
+    for cmd in [f"echo x > {_STATE}", f"echo x>>{_STATE}", f"rm {_STATE}",
+                f"sed -i s/a/b/ {_STATE}", f"tee {_STATE}", f"cp evil.json {_STATE}"]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_write_protected_trust_state_read_allowed():
+    assert secrets_guard.evaluate(_event("Read", file_path=_STATE), CFG) is None
+    assert secrets_guard.evaluate(_event("Bash", command=f"cat {_STATE}"), CFG) is None
+    assert secrets_guard.evaluate(
+        _event("Bash", command=f"cat {_STATE} 2>/dev/null"), CFG) is None
+
+
+def test_write_protected_trust_state_does_not_overreach():
+    # `.claude/` 配下でない同名ファイル・別名は保護対象外(裸 basename にしない)
+    for path in ["/app/safe-dev-hooks-state.json",
+                 "/home/alice/.claude/safe-dev-hooks-state.json.bak",
+                 "/home/alice/.claude/other-state.json"]:
+        assert secrets_guard.evaluate(_event("Write", file_path=path), CFG) is None, path

@@ -10,6 +10,7 @@
 ### Added
 - `hooks/lib/trust.py`: 承認判定・通知文面・状態ファイル(`$HOME/.claude/safe-dev-hooks-state.json`: 未承認通知のクールダウンとピン留めなし承認の変化検出)
 - `hook_io.finalize` が `_notices`(意図的に採用しなかった設定の通知)を `_errors` と分けて合成。`audit_log` は通知を出さない
+- `secrets_guard` の書込保護に `.claude/` 配下の `safe-dev-hooks-state.json` を追加。状態ファイルを先回りして書き換えると、ピン留めなし承認(`true`)での内容変化を知らせる通知を黙らせられるため(状態ファイルが読み書きできない場合は、可視性を優先して毎回通知する)
 
 ## [0.6.1] - 2026-08-23
 
