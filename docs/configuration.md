@@ -12,6 +12,32 @@
 
 設定ファイルが1つも無くても、全ガードはビルトイン既定値で動作する(「設定は有効化ではなく調整のため」という設計原則)。
 
+### 信頼層: グローバル=信頼 / プロジェクト=要承認(0.7.0)
+
+プロジェクト直下の `.claude-hooks.json` はリポジトリ由来の**信頼できない入力**である(`git clone` しただけで届く)。0.7.0 から、この層は**グローバル設定 `$HOME/.claude/claude-hooks.json` の `trusted_projects` で承認されたプロジェクトに限り**マージされる。未承認なら JSON として解析すらされず、`systemMessage` に承認用エントリが印字される(既定 1 時間のクールダウン付き)。プロジェクト層は生バイト列で読んでから承認判定を行い(`hooks/lib/config.py` の `_read_layer`/`_apply_layer`)、承認された場合のみ同じバイト列をパースする(再オープンしない)。
+
+```jsonc
+{
+  "trusted_projects": {
+    // 既定: 内容ピン留め承認。値は .claude-hooks.json の生バイト列の SHA-256("sha256:" 接頭辞)
+    "/home/USER/work/myrepo": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    // ピン留めなし承認(オプトイン): 内容が変わっても採用し続ける。変化した回に 1 度だけ通知
+    "/home/USER/work/my-active-repo": true,
+    // 明示的な不承認: 採用せず、未承認通知も出さない
+    "/home/USER/work/someones-repo": false
+  },
+  "notice_cooldown_sec": 3600
+}
+```
+
+- キーはプロジェクトディレクトリの `realpath`(シンボリックリンク解決済み)。worktree やモノレポのサブディレクトリは別パス=別承認
+- 承認エントリは**フックが計算して `systemMessage` に印字する**ものを貼り付ける(`sha256sum` を手で叩く必要はない)。承認後に 1 バイトでも変われば「変更検知」の警告が出て採用されない(再承認まで)
+- `true`(ピン留めなし)は、**将来そのファイルに書かれる内容に対しても前もって全権限を与える**設定である。信頼の対象がファイル内容でなく「リポジトリのメンテナ」になる、と理解して選ぶこと。変化は検出され 1 度通知される(状態ファイル `$HOME/.claude/safe-dev-hooks-state.json` に依存)
+- 承認済みプロジェクトの設定は従来どおり**最高優先度の全権限**を持つ(deny 判定の緩和・`quality_gate.commands`/`notify.command` の実行・`scanners.*` のイメージと bind-mount)。鍵ごとの部分承認は無い
+- `trusted_projects` はグローバル層からのみ読む(プロジェクト層に書いても自己承認にならない)。値が dict でなければ `_errors` に記録され全プロジェクトが非承認になる
+- 通知: 未承認はクールダウン(`notice_cooldown_sec`、`0` で毎回)、ハッシュ不一致は常に、ピン留めなしは変化した回のみ、`false` は出さない。`audit_log` は通知を出さない
+- 承認判定自体(`hooks/lib/trust.py` の `gate()`)は内部で例外を出さない設計だが、万一の異常時も安全側(不採用)に倒し、`systemMessage` に `safe-dev-hooks: プロジェクト設定の信頼判定に失敗したため無視しました: <例外の型>: <メッセージ>` を印字する([docs/security-model.md](security-model.md) §5 fail-open/fail-close方針)
+
 ### マージの規則
 
 - キーごとの再帰的ディープマージ(`hooks/lib/config.py` の `_merge`)。
@@ -119,7 +145,10 @@
                                               // "docker"モードで使うイメージ(既定は固定タグ)
     "gitleaks_config": null                  // gitleaksの`-c`に渡す.gitleaks.tomlパス。未指定時は<cwd>/.gitleaks.tomlが
                                               // 存在すれば自動採用、無ければgitleaks既定設定で実行する
-  }
+  },
+  "trusted_projects": {},                    // プロジェクト設定の承認記録(グローバル層専用)。
+                                              // { "<realpath>": "sha256:<hex64>" | true | false }。§1 信頼層を参照
+  "notice_cooldown_sec": 3600                // 未承認通知のクールダウン秒。0 で毎回通知
   // 注: scanners.gitleaksは secrets_scan/exfil_guard/exfil_output_scan が共有する秘密検出バックエンドの設定である
   // (`hooks/lib/scanners.py` の scan_secrets)。内蔵patterns(rules/secret_patterns.json)は常に無条件で走るfloorであり、
   // gitleaksの検出結果はその上にunion加算されるだけで置き換えない(不在・失敗時もfloorは不変=credentials=denyの保証は
@@ -154,6 +183,8 @@
 ```
 
 ### 4.2 チーム用(`custom_patterns` + `trusted_servers` 追加)
+
+> 0.7.0 以降、このプリセットをプロジェクトの `.claude-hooks.json` に置いた場合、**メンバー各自が一度承認**する必要がある(§1 信頼層)。`trusted_servers` のようにガードを緩める値は、そもそもプロジェクト層で共有せず各自のグローバル設定に置くことを勧める。
 
 社内ドメインへの言及を検出し、社内ナレッジベースMCPサーバーは検査から除外する例。
 

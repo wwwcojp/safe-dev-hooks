@@ -79,7 +79,11 @@ git clone https://github.com/wwwcojp/safe-dev-hooks.git
 
 すべての設定は**任意**です — 設定ファイルが無くても全ガードは安全側の既定値で動きます。設定は「有効化」ではなく「調整」のためのものです。deny層を設定ファイルから緩めることはできません。
 
-チームで共有する設定はリポジトリ直下の `.claude-hooks.json` に、個人の既定値は `~/.claude/claude-hooks.json` に置きます。(これらはHook独自の設定ファイルで、Claude Code 本体の `settings.json`(Hookの配線のみを行い、挙動の調整はしない)とは別物です。)最小例:
+チームで共有する設定はリポジトリ直下の `.claude-hooks.json` に、個人の既定値は `~/.claude/claude-hooks.json` に置きます。(これらはHook独自の設定ファイルで、Claude Code 本体の `settings.json`(Hookの配線のみを行い、挙動の調整はしない)とは別物です。)
+
+**0.7.0 以降、リポジトリ直下の `.claude-hooks.json` は `~/.claude/claude-hooks.json` の `"trusted_projects"` で承認したときだけ適用されます**(内容ハッシュ / `true` / `false`)。未承認のプロジェクト設定は無視され(解析もされず)、フックが貼り付け可能な承認エントリを印字します — clone しただけでガードが緩んだり設定由来のコマンドが走ったりすることはありません。詳細: [docs/configuration.md](docs/configuration.md) §1。
+
+最小例:
 
 ```json
 {
