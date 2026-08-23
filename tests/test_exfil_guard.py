@@ -2,7 +2,7 @@ import io
 import json
 
 import pytest
-from helpers import load_hook
+from helpers import approve_project, load_hook
 
 from hooks.lib import config
 
@@ -89,10 +89,10 @@ def _run_main(monkeypatch, event, capsys):
 
 
 def test_main_always_mode_asks_everything(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"exfil_guard": {"mode": "always"}}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     event = {
         "tool_name": "mcp__foo__bar",
         "cwd": str(tmp_path),
@@ -103,10 +103,10 @@ def test_main_always_mode_asks_everything(monkeypatch, tmp_path, capsys):
 
 
 def test_main_always_mode_deny_not_downgraded(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"exfil_guard": {"mode": "always"}}), encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     event = {
         "tool_name": "mcp__foo__bar",
         "cwd": str(tmp_path),
@@ -117,11 +117,11 @@ def test_main_always_mode_deny_not_downgraded(monkeypatch, tmp_path, capsys):
 
 
 def test_main_trusted_server_skipped_even_in_always(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"exfil_guard": {"mode": "always", "trusted_servers": ["mcp__foo"]}}),
         encoding="utf-8",
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     event = {
         "tool_name": "mcp__foo__bar",
         "cwd": str(tmp_path),

@@ -21,3 +21,11 @@ def _hide_external_secret_scanners(monkeypatch):
         return real_which(name, *args, **kwargs)
 
     monkeypatch.setattr(shutil, "which", fake_which)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_trust_state(monkeypatch, tmp_path):
+    """信頼判定の状態ファイルを実 $HOME に書かない(テストごとに tmp へ)。"""
+    from hooks.lib import trust
+
+    monkeypatch.setattr(trust, "STATE_PATH", tmp_path / "safe-dev-hooks-state.json")

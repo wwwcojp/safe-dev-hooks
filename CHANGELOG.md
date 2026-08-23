@@ -2,6 +2,16 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.7.0] - 2026-08-23
+
+### Changed(破壊的変更)
+- **プロジェクト直下の `.claude-hooks.json` は承認制になった。** グローバル設定 `$HOME/.claude/claude-hooks.json` の `trusted_projects` に、プロジェクトの `realpath` をキーとして内容ハッシュ(`"sha256:…"`、既定)/ `true`(ピン留めなし)/ `false`(明示的な不承認)を登録したプロジェクトのみマージする。未承認のプロジェクト設定は JSON として解析せず無視し、`systemMessage` に貼り付け可能な承認エントリを印字する(既定 1 時間のクールダウン、`notice_cooldown_sec` で調整)。**既存利用者のプロジェクト設定は承認するまで無効になる。** 背景: 敵対的リポジトリを clone して開くだけで deny 判定の緩和(`allow_paths`・`allow`・`trusted_servers`・`categories: "off"`・`protected_branches: []`)とコマンド実行(`quality_gate.commands`・`notify.command`・`scanners.*`)に到達できた(セキュリティスキャン 12 件の単一根本原因)。denylist 方式は列挙漏れで 2 度却下されたため、列挙そのものを廃止するオプトイン方式を採用。設計: `docs/superpowers/specs/2026-07-26-project-config-trust-optin-design.md`
+
+### Added
+- `hooks/lib/trust.py`: 承認判定・通知文面・状態ファイル(`$HOME/.claude/safe-dev-hooks-state.json`: 未承認通知のクールダウンとピン留めなし承認の変化検出)
+- `hook_io.finalize` が `_notices`(意図的に採用しなかった設定の通知)を `_errors` と分けて合成。`audit_log` は通知を出さない
+- `secrets_guard` の書込保護に `.claude/` 配下の `safe-dev-hooks-state.json` を追加。状態ファイルを先回りして書き換えると、ピン留めなし承認(`true`)での内容変化を知らせる通知を黙らせられるため(状態ファイルが読み書きできない場合は、可視性を優先して毎回通知する)
+
 ## [0.6.1] - 2026-08-23
 
 ### Fixed

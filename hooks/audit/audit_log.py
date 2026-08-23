@@ -19,7 +19,7 @@ def main() -> None:
     cfg_all = config.load_config(event.get("cwd"))
     cfg = cfg_all.get("audit_log", {})
     if not cfg.get("enabled", True):
-        hook_io.finalize(None, cfg_all)
+        hook_io.finalize(None, cfg_all, quiet_notices=True)
     try:
         log_dir = Path(cfg.get("path", ".claude/logs"))
         if not log_dir.is_absolute():
@@ -40,7 +40,7 @@ def main() -> None:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass  # 監査ログの失敗は開発を止めない(spec セクション8)
-    hook_io.finalize(None, cfg_all)
+    hook_io.finalize(None, cfg_all, quiet_notices=True)
 
 
 if __name__ == "__main__":

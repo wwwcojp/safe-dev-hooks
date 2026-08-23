@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from helpers import load_hook
+from helpers import isolated_home_env, load_hook
 
 secrets_guard = load_hook("pre_tool_use/secrets_guard.py")
 
@@ -169,8 +169,9 @@ def test_deny_survives_enabled_false_blackbox(tmp_path):
               / "hooks" / "pre_tool_use" / "secrets_guard.py")
     event = {"tool_name": "Read", "cwd": str(tmp_path),
              "tool_input": {"file_path": "/proj/.env"}}
+    env = isolated_home_env(tmp_path / "home", approve=tmp_path)
     r = subprocess.run([sys.executable, str(script)], input=json.dumps(event),
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, timeout=30, env=env)
     assert r.returncode == 0
     out = json.loads(r.stdout)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
@@ -272,3 +273,40 @@ def test_write_protected_uses_event_cwd_not_process_cwd():
     v = secrets_guard.evaluate(
         _event("Bash", command="echo x > .loop/state.json", cwd="/home/alice/other"), ABS_CFG)
     assert v is None
+
+
+# ---- 信頼状態ファイル($HOME/.claude/safe-dev-hooks-state.json)の書込保護(0.7.0) ----
+# unpinned_seen はピン留めなし承認での内容変化を1度だけ通知するための唯一の記録で、
+# 先回りして書き換えられると「変わった」通知が黙る。notice_last も未承認リマインダを
+# 黙らせられる。パススコープ付き(`*/.claude/…`)で、無関係な同名ファイルは巻き込まない。
+
+_STATE = "/home/alice/.claude/safe-dev-hooks-state.json"
+
+
+def test_write_protected_trust_state_file_denied():
+    for path in [_STATE, "/home/alice/.claude/safe-dev-hooks-state.json"]:
+        for tool in ("Write", "Edit"):
+            v = secrets_guard.evaluate(_event(tool, file_path=path), CFG)
+            assert v is not None and v["decision"] == "deny", (tool, path)
+
+
+def test_write_protected_trust_state_bash_mutation_denied():
+    for cmd in [f"echo x > {_STATE}", f"echo x>>{_STATE}", f"rm {_STATE}",
+                f"sed -i s/a/b/ {_STATE}", f"tee {_STATE}", f"cp evil.json {_STATE}"]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+
+
+def test_write_protected_trust_state_read_allowed():
+    assert secrets_guard.evaluate(_event("Read", file_path=_STATE), CFG) is None
+    assert secrets_guard.evaluate(_event("Bash", command=f"cat {_STATE}"), CFG) is None
+    assert secrets_guard.evaluate(
+        _event("Bash", command=f"cat {_STATE} 2>/dev/null"), CFG) is None
+
+
+def test_write_protected_trust_state_does_not_overreach():
+    # `.claude/` 配下でない同名ファイル・別名は保護対象外(裸 basename にしない)
+    for path in ["/app/safe-dev-hooks-state.json",
+                 "/home/alice/.claude/safe-dev-hooks-state.json.bak",
+                 "/home/alice/.claude/other-state.json"]:
+        assert secrets_guard.evaluate(_event("Write", file_path=path), CFG) is None, path

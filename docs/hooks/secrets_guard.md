@@ -37,6 +37,7 @@
   - `.claude-hooks.json` / `claude-hooks.json`(本Hooks集の設定ファイル。所在を問わない)
   - `.mcp.json` / `.claude.json`(MCPサーバ定義・Claude Codeグローバル設定。MCPサーバの `command` は任意コマンド実行経路になるため。所在を問わない)
   - `.claude/` 配下の `settings.json` / `settings.local.json`(裸の `settings.json` は対象外 — `.vscode/settings.json` 等の正当な編集を妨げない)
+  - `.claude/` 配下の `safe-dev-hooks-state.json`(信頼判定の通知状態。0.7.0。先回りして書き換えると、ピン留めなし承認の内容変化を知らせる通知を黙らせられるため)
   - このインストール自身の `hooks/`/`rules/` ディレクトリ配下すべて(実パスを解決して判定。`hooks/hooks.json` もこれに含まれる)
 - `.claude-hooks.json` の `secrets_guard.write_protected_paths` に追加したパターンもマージされる(解除は不可)
 - `Edit`/`Write` は `file_path` が対象に一致すれば deny。`Read` は対象外(閲覧は妨げない)

@@ -81,7 +81,11 @@ In the snippet you merge, replace `$HOME/safe-dev-hooks` with your clone path. E
 
 Every setting is **optional** — all guards run with safe defaults even with no config file at all. Configuration is for *tuning*, not for turning guards on. The deny tier can never be relaxed from a config file.
 
-Put project-shared settings in `.claude-hooks.json` at your repo root; personal defaults go in `~/.claude/claude-hooks.json`. (These are the hooks' own config files — separate from Claude Code's `settings.json`, which only wires the hooks up and doesn't tune them.) A minimal example:
+Put project-shared settings in `.claude-hooks.json` at your repo root; personal defaults go in `~/.claude/claude-hooks.json`. (These are the hooks' own config files — separate from Claude Code's `settings.json`, which only wires the hooks up and doesn't tune them.)
+
+**Since 0.7.0, a repo-level `.claude-hooks.json` is only applied after you approve it** in `~/.claude/claude-hooks.json` (`"trusted_projects"`: content hash, `true`, or `false`). Unapproved project config is ignored (not even parsed) and the hook prints a paste-ready approval entry — so cloning a repository can never weaken your guards or run commands from its config. See [docs/configuration.md](docs/configuration.md) §1.
+
+A minimal example:
 
 ```json
 {

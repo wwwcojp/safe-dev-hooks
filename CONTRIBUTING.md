@@ -7,6 +7,15 @@
 - [`uv`](https://docs.astral.sh/uv/)(Python本体はuvが解決するため個別インストール不要)
 - リポジトリのclone後、依存関係のインストールは不要(`uv run` が都度解決する)。開発用ツール(`pytest`/`ruff`)を明示的にインストールしたい場合は `uv sync` を実行する
 
+### プロジェクト設定の承認(0.7.0 以降)
+
+このリポジトリの `.claude-hooks.json`(`real-home-path` 規約の `custom_patterns` と、Loop Engineering のゲート設定・baseline の書込保護)は、clone 直後は**未承認**で無視される(プロジェクト設定のオプトイン信頼。`docs/configuration.md` §1 信頼層)。初回のツール呼び出しで `systemMessage` に承認エントリが印字されるので、次のどちらかを行う:
+
+- 印字されたエントリを `$HOME/.claude/claude-hooks.json` の `"trusted_projects"` に貼り付ける(内容ピン留め。`.claude-hooks.json` を変更するたびに再承認)。メンテナは値を `true`(ピン留めなし)にしてもよい
+- あるいは `real-home-path` の `custom_patterns` と `secrets_guard.write_protected_paths` を**自分のグローバル設定に入れる**(承認や worktree の有無と無関係に常時有効。コントリビュータにはこちらが堅牢)
+
+未承認のままでも CI のリークチェックとブランチレビューは残るので、作業は止まらない。
+
 ### 検証ゲート(loop-hooks)
 
 これはメンテナー向けのローカル開発環境の設定です(`~/loop-hooks` はメンテナーのローカルにのみ導入された未公開プラグインで、外部から取得できません)。外部コントリビューターは有効化手順を無視してかまいません — `uv run python scripts/verify.py quick` は単体でも動作するので、PR前に手動で実行するだけで十分です。

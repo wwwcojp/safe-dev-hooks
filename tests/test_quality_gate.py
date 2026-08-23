@@ -3,7 +3,7 @@ import json
 import shlex
 
 import pytest
-from helpers import load_hook
+from helpers import approve_project, load_hook
 
 from hooks.lib import config
 
@@ -58,11 +58,11 @@ def _run_main(monkeypatch, event, capsys):
 
 
 def test_main_block_mode(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"quality_gate": {"commands": {"*.py": ["python3 -m py_compile {file}"]}}}),
         encoding="utf-8",
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     bad = tmp_path / "bad.py"
     bad.write_text("def broken(:\n", encoding="utf-8")
     event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(bad)}}
@@ -71,7 +71,6 @@ def test_main_block_mode(monkeypatch, tmp_path, capsys):
 
 
 def test_main_warn_mode(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     (tmp_path / ".claude-hooks.json").write_text(
         json.dumps({"quality_gate": {
             "mode": "warn",
@@ -79,6 +78,7 @@ def test_main_warn_mode(monkeypatch, tmp_path, capsys):
         }}),
         encoding="utf-8",
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     bad = tmp_path / "bad.py"
     bad.write_text("def broken(:\n", encoding="utf-8")
     event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(bad)}}

@@ -2,7 +2,7 @@ import io
 import json
 
 import pytest
-from helpers import load_hook
+from helpers import approve_project, load_hook
 
 from hooks.lib import config
 
@@ -67,6 +67,7 @@ def test_enabled_false_disables(monkeypatch, tmp_path, capsys):
     (tmp_path / ".claude-hooks.json").write_text(
         '{"config_guard": {"enabled": false}}', encoding="utf-8"
     )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
     event = {"hook_event_name": "ConfigChange", "source": "user_settings",
              "cwd": str(tmp_path)}
     assert _run(monkeypatch, event, capsys) is None
