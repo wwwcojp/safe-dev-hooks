@@ -377,6 +377,7 @@ def test_malformed_config_does_not_disable_deny_layer(tmp_path):
     assert r.returncode == 0
     out = json.loads(r.stdout)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "未承認のため無視しました" in out["systemMessage"]
 
 
 # --- 層の縮退先(spec #5): 上位層の不正値はビルトインではなく直下の層へ戻る ---

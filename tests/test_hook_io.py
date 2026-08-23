@@ -104,3 +104,39 @@ def test_finalize_config_error_message_exact_text(capsys):
             "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: a.json; b.json"
         )
     }
+
+
+def test_finalize_appends_notices_after_errors(capsys):
+    with pytest.raises(SystemExit) as e:
+        hook_io.finalize(None, {"_errors": ["a.json"], "_notices": ["N1", "N2"]})
+    assert e.value.code == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "systemMessage": (
+            "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: a.json\nN1\nN2"
+        )
+    }
+
+
+def test_finalize_notices_only(capsys):
+    with pytest.raises(SystemExit):
+        hook_io.finalize({"decision": "block", "reason": "x"}, {"_notices": ["N1"]})
+    assert json.loads(capsys.readouterr().out) == {
+        "decision": "block", "reason": "x", "systemMessage": "N1"
+    }
+
+
+def test_finalize_quiet_notices_suppresses_only_notices(capsys):
+    with pytest.raises(SystemExit):
+        hook_io.finalize(None, {"_errors": ["a.json"], "_notices": ["N1"]}, quiet_notices=True)
+    assert json.loads(capsys.readouterr().out) == {
+        "systemMessage": "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: a.json"
+    }
+    with pytest.raises(SystemExit):
+        hook_io.finalize(None, {"_notices": ["N1"]}, quiet_notices=True)
+    assert capsys.readouterr().out == ""
+
+
+def test_finalize_preserves_existing_system_message_with_notices(capsys):
+    with pytest.raises(SystemExit):
+        hook_io.finalize({"systemMessage": "既存"}, {"_notices": ["N1"]})
+    assert json.loads(capsys.readouterr().out) == {"systemMessage": "既存\nN1"}

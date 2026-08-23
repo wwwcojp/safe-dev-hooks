@@ -67,6 +67,18 @@ def test_audit_survives_non_dict_section(monkeypatch, tmp_path, capsys):
     assert out is not None and "systemMessage" in out
 
 
+def test_audit_log_does_not_emit_trust_notices(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    (tmp_path / ".claude-hooks.json").write_text('{"notify": {"method": "bell"}}', encoding="utf-8")
+    event = {"hook_event_name": "Stop", "cwd": str(tmp_path), "session_id": "s"}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    with pytest.raises(SystemExit) as e:
+        audit.main()
+    assert e.value.code == 0
+    out = capsys.readouterr().out
+    assert "未承認" not in out
+
+
 def test_notify_default_auto_falls_back_to_bell(monkeypatch, tmp_path, capsys):
     """既定(auto)でデスクトップ通知が全滅した場合はベルへフォールバックする。"""
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")

@@ -36,15 +36,24 @@ def post_block(reason: str, context: str = "") -> dict:
     return out
 
 
-def finalize(out: dict | None, cfg: dict) -> None:
-    """判定出力に設定エラー警告を合成して出力し、exit 0 する。"""
+def finalize(out: dict | None, cfg: dict, quiet_notices: bool = False) -> None:
+    """判定出力に設定エラー警告と信頼判定の通知(_notices)を合成して出力し、exit 0 する。
+
+    _errors は「設定が壊れている」、_notices は「設定を意図的に採用しなかった」。
+    quiet_notices=True は非対話のロギングフック(audit_log)用で、_notices を出さない。
+    """
     errors = cfg.get("_errors") or []
+    notices = [] if quiet_notices else (cfg.get("_notices") or [])
+    messages: list[str] = []
     if errors:
-        out = dict(out or {})
-        msg = (
+        messages.append(
             "[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: "
             + "; ".join(errors)
         )
+    messages.extend(notices)
+    if messages:
+        out = dict(out or {})
+        msg = "\n".join(messages)
         existing = out.get("systemMessage")
         out["systemMessage"] = f"{existing}\n{msg}" if existing else msg
     if out:
