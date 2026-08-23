@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import subprocess
@@ -749,3 +750,60 @@ def test_no_project_file_means_no_trust_notice(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     cfg = config.load_config(str(tmp_path))
     assert cfg["_notices"] == [] and cfg["_errors"] == []
+
+
+# --- revert は fallback の値を「複製」して採用する(共有しない) ---
+# 呼び出し側から見れば fallback は破棄されるため現状この差は観測できない(0.6.1 で等価変異と
+# 記録した箇所)。しかし「戻した値が下位層のオブジェクトと繋がっていない」ことは _validate の
+# 防御的な契約であり、将来 fallback を再利用する形に変わったときに壊れると気付けない。
+# 直接呼び出して契約自体を固定する。
+
+
+def test_validate_revert_deep_copies_from_fallback():
+    fallback = copy.deepcopy(config.DEFAULTS)
+    fallback["exfil_guard"]["mode"] = "always"
+    fallback["exfil_guard"]["categories"]["pii"] = "deny"
+    cfg = copy.deepcopy(config.DEFAULTS)
+    cfg["exfil_guard"] = "not-a-dict"  # 型不正 → セクションごと fallback へ戻る
+    errors = []
+    out = config._validate(cfg, fallback, errors)
+
+    assert out["exfil_guard"]["mode"] == "always"  # 直下の層の値を採用
+    assert out["exfil_guard"] is not fallback["exfil_guard"]  # 浅い別名でない
+    assert out["exfil_guard"]["categories"] is not fallback["exfil_guard"]["categories"]
+    # 入れ子まで複製されている: 採用後に書き換えても下位層は無傷(shallow copy では壊れる)
+    out["exfil_guard"]["categories"]["pii"] = "mutated"
+    assert fallback["exfil_guard"]["categories"]["pii"] == "deny"
+    assert errors == ["exfil_guard: 不正な値 'not-a-dict' のため無視しました(下位層の値を使用)"]
+
+
+def test_validate_revert_deep_copies_nested_category_value():
+    # カテゴリ単位の revert(fallback_categories[cat_key])も同様に複製する
+    fallback = copy.deepcopy(config.DEFAULTS)
+    cfg = copy.deepcopy(config.DEFAULTS)
+    cfg["exfil_guard"]["categories"]["pii"] = "bogus"
+    errors = []
+    out = config._validate(cfg, fallback, errors)
+    expected = config.DEFAULTS["exfil_guard"]["categories"]["pii"]
+    assert out["exfil_guard"]["categories"]["pii"] == expected
+    assert errors == [
+        "exfil_guard.categories.pii: 不正な値 'bogus' のため無視しました(下位層の値を使用)"
+    ]
+
+
+def test_apply_layer_does_not_share_untouched_sections_with_lower_layer():
+    """マージ結果は下位層と入れ子オブジェクトを共有しない(_merge の別名化を断つ)。
+
+    revert と同じく、現状は下位層が破棄されるため呼び出し側から差は観測できないが、
+    「層をまたいで同じ dict を書き換えてしまう」経路を作らない契約として固定する。
+    """
+    lower = copy.deepcopy(config.DEFAULTS)
+    lower["exfil_guard"]["mode"] = "always"
+    raw = json.dumps({"audit_log": {"path": "logs"}}).encode("utf-8")  # 別セクションだけ触る
+    out = config._apply_layer(lower, Path("dummy.json"), raw, [])
+
+    assert out["audit_log"]["path"] == "logs"
+    assert out["exfil_guard"]["mode"] == "always"  # 触っていない層の値は残る
+    assert out["exfil_guard"] is not lower["exfil_guard"]  # が、同じオブジェクトではない
+    out["exfil_guard"]["mode"] = "detect"
+    assert lower["exfil_guard"]["mode"] == "always"
