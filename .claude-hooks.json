@@ -6,5 +6,12 @@
         "regex": "/(home|Users)/(?!USER\\b|alice\\b|user\\b)[A-Za-z_][A-Za-z0-9._-]*"
       }
     ]
+  },
+  "secrets_guard": {
+    "write_protected_paths": [
+      ".loop-hooks.json",
+      "*/.loop/state.json",
+      "*/.loop/mutation-baseline.json"
+    ]
   }
 }
