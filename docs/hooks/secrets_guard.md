@@ -40,6 +40,7 @@
   - このインストール自身の `hooks/`/`rules/` ディレクトリ配下すべて(実パスを解決して判定。`hooks/hooks.json` もこれに含まれる)
 - `.claude-hooks.json` の `secrets_guard.write_protected_paths` に追加したパターンもマージされる(解除は不可)
 - `Edit`/`Write` は `file_path` が対象に一致すれば deny。`Read` は対象外(閲覧は妨げない)
+- 照合は「表記」でなく「正規化したパス」に対して行う: Bash のトークンも `Edit`/`Write` の `file_path` も、`~` を展開し、相対ならイベントの `cwd` を基準に絶対化し、`./`・`../` を畳んでから basename と絶対パスの 2 形で照合する(`echo x > .loop/state.json` と `/path/to/proj/.loop/state.json` は同じ扱い)。シンボリックリンクは解決しない。コマンド内の `cd` をまたぐ相対パス(`cd ../x && echo y > .loop/state.json`)は追跡しない
 - `Bash` はコマンド中に変異キーワード(`>`/`>>` によるリダイレクト。トークンに密着した `>file` を含む、`dd of=`、`rm`/`mv`/`cp`/`sed -i`/`tee`/`truncate`/`ln`/`install`)を含むセグメントのみを検査し、変異先のパス形式トークンが対象に一致すれば deny
 - `Bash` はさらに `curl`/`wget` の**出力フラグ**(`-o`(バンドル末尾・密着引数 `-oFILE` を含む)/ `--output`、wgetの `-O` / `--output-document`、`=` 連結形式を含む)の引数トークンも検査する。ダウンロードによる保護ファイルの上書き(例: 設定ファイルを外部から取得して置き換える操作)を塞ぐもので、出力フラグの引数のみを照合するため、URL等の無関係トークンや読取用途の `curl` を巻き込まない。wget の `-o`/`--output-file`(ログ書込)・`-a`/`--append-output`(ログ追記)も改変経路として検査対象であり、セグメント内に `curl` と `wget` が混在する場合は両方のフラグ集合を適用する
 

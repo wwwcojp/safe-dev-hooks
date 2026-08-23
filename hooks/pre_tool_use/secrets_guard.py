@@ -125,13 +125,27 @@ def _self_protected_dirs() -> list[Path]:
     return [hooks_dir, hooks_dir.parent / "rules"]
 
 
-def check_write_protected(path_str: str, cfg: dict) -> str | None:
+def _normalize_target(path_str: str, cwd: str | None) -> str:
+    """照合用にパスを正規化する: ~ 展開 → cwd 基準で絶対化 → ./ と ../ を畳む。
+
+    同じファイルでも経路によって表記が違う(Edit/Write は絶対 file_path、Bash は
+    コマンドから切り出した相対トークン)ため、表記でなく正規化した絶対パスで照合する。
+    シンボリックリンクは解決しない(「書こうとしている場所」を利用者の指定どおりに見る)。
+    基準はイベントの cwd。無ければフックプロセスの cwd。コマンド内の `cd` は追跡しない。
+    """
+    p = os.path.expanduser(path_str)
+    if not os.path.isabs(p):
+        p = os.path.join(cwd or os.getcwd(), p)
+    return os.path.normpath(p)
+
+
+def check_write_protected(path_str: str, cfg: dict, cwd: str | None = None) -> str | None:
     rules = patterns.load_rules("sensitive_paths.json")
     wp = rules.get("write_protected", []) + cfg.get("write_protected_paths", [])
-    p = os.path.expanduser(path_str)
-    name = os.path.basename(p.rstrip("/"))
+    p = _normalize_target(path_str, cwd)
+    name = os.path.basename(p)
     for pat in wp:
-        if fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(path_str, pat):
+        if fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(p, pat):
             return pat
     try:
         rp = Path(p).resolve()
@@ -158,7 +172,7 @@ def evaluate(event: dict, cfg: dict) -> dict | None:
             return {"decision": "deny",
                     "reason": f"機密ファイルへのアクセスを遮断: {target}(該当ルール: {hit})"}
         if tool in ("Edit", "Write"):
-            wp = check_write_protected(target, cfg)
+            wp = check_write_protected(target, cfg, cwd=event.get("cwd"))
             if wp:
                 return {"decision": "deny",
                         "reason": f"設定/フックファイルの改変を遮断: {target}(該当ルール: {wp})"}
@@ -181,7 +195,7 @@ def evaluate(event: dict, cfg: dict) -> dict | None:
             for tok in seg_tokens:
                 if not _looks_like_path(tok):
                     continue
-                wp = check_write_protected(tok, cfg)
+                wp = check_write_protected(tok, cfg, cwd=event.get("cwd"))
                 if wp:
                     return {"decision": "deny",
                             "reason": f"設定/フックファイルの改変を遮断: {tok}(該当ルール: {wp})"}

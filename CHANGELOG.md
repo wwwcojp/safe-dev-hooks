@@ -2,6 +2,11 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### Fixed
+- `secrets_guard` の write_protected 照合を「表記」でなく「イベントの `cwd` 基準で正規化した絶対パス」に対して行うよう修正。Bash の相対トークン(`echo x > .loop/state.json` 等)が `*/.loop/state.json` のようなパススコープ付きパターンを素通りしていた穴を塞ぐ(`~` 展開・`./`・`../` も同様。シンボリックリンクと `cd` またぎは追跡しない)。ビルトイン `rules/sensitive_paths.json` の相対表記の重複エントリ(`.claude/settings.json` / `.claude/settings.local.json`)は正規化で包含されるため削除。
+
 ## [0.6.0] - 2026-07-23
 
 ### Added

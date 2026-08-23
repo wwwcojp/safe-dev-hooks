@@ -11,8 +11,11 @@ secrets_guard = load_hook("pre_tool_use/secrets_guard.py")
 CFG = {"enabled": True, "protected_paths": [], "allow_paths": []}
 
 
-def _event(tool, **tool_input):
-    return {"tool_name": tool, "tool_input": tool_input}
+def _event(tool, cwd=None, **tool_input):
+    ev = {"tool_name": tool, "tool_input": tool_input}
+    if cwd is not None:
+        ev["cwd"] = cwd
+    return ev
 
 
 DENY_EVENTS = [
@@ -172,3 +175,100 @@ def test_deny_survives_enabled_false_blackbox(tmp_path):
     out = json.loads(r.stdout)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "systemMessage" in out
+
+
+# ---- 書込保護の照合は「表記」でなく「イベントの cwd 基準で正規化したパス」に対して行う ----
+# 同じファイルでも経路(Edit/Write の絶対 file_path、Bash の相対トークン)で表記が違う。
+# パススコープ付きパターン(`*/.loop/state.json`)が全表記を飲み込むことを表記ごとに確認する。
+
+PROJ = "/home/alice/proj"
+LOOP_CFG = dict(CFG, write_protected_paths=["*/.loop/state.json"])
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo x > .loop/state.json",                    # 相対(従来は素通り)
+    "echo x > ./.loop/state.json",                  # ./ 付き
+    "echo x > /home/alice/proj/.loop/state.json",   # 絶対
+    "echo x > ../proj/.loop/state.json",            # ../ 経由で同じ場所
+    "tee .loop/state.json",                         # 変異子経由
+    "cp x .loop/state.json",
+    "sed -i s/a/b/ .loop/state.json",
+])
+def test_write_protected_bash_token_normalized_against_event_cwd(cmd):
+    v = secrets_guard.evaluate(_event("Bash", command=cmd, cwd=PROJ), LOOP_CFG)
+    assert v is not None and v["decision"] == "deny", cmd
+    assert "*/.loop/state.json" in v["reason"], cmd
+
+
+def test_write_protected_bash_tilde_is_expanded(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/alice")
+    v = secrets_guard.evaluate(
+        _event("Bash", command="echo x > ~/proj/.loop/state.json", cwd=PROJ), LOOP_CFG)
+    assert v is not None and v["decision"] == "deny"
+    assert "*/.loop/state.json" in v["reason"]
+
+
+@pytest.mark.parametrize("tool", ["Write", "Edit"])
+def test_write_protected_file_tool_relative_path_normalized(tool):
+    v = secrets_guard.evaluate(_event(tool, file_path=".loop/state.json", cwd=PROJ), LOOP_CFG)
+    assert v is not None and v["decision"] == "deny", tool
+    assert "*/.loop/state.json" in v["reason"]
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat .loop/state.json",                 # 読取は止めない
+    "cat .loop/state.json 2>/dev/null",
+    "echo x > .loop/state.json.bak",        # 似て非なるパスは通る
+    "echo x > loop/state.json",
+    "echo x > ./notes/.loop-state.json.bak",
+])
+def test_write_protected_normalization_does_not_overreach(cmd):
+    assert secrets_guard.evaluate(_event("Bash", command=cmd, cwd=PROJ), LOOP_CFG) is None, cmd
+
+
+def test_write_protected_without_event_cwd_falls_back_to_process_cwd(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    v = secrets_guard.evaluate(_event("Bash", command="echo x > .loop/state.json"), LOOP_CFG)
+    assert v is not None and v["decision"] == "deny"
+    assert "*/.loop/state.json" in v["reason"]
+
+
+def test_builtin_claude_settings_all_notations_covered_by_path_scoped_pattern(monkeypatch):
+    # 重複エントリ(相対表記 ".claude/settings.json")削除の根拠:
+    # パススコープ付き "*/.claude/settings.json" だけで相対 / ./ / 絶対 / ../ の全表記を飲み込む
+    monkeypatch.setattr(
+        secrets_guard.patterns, "load_rules",
+        lambda name: {"protected": [], "allow": [], "protected_dirs": [],
+                      "write_protected": ["*/.claude/settings.json"]},
+    )
+    for cmd in ["echo x > .claude/settings.json",
+                "echo x > ./.claude/settings.json",
+                "echo x > /home/alice/proj/.claude/settings.json",
+                "echo x > ../proj/.claude/settings.json"]:
+        v = secrets_guard.evaluate(_event("Bash", command=cmd, cwd=PROJ), CFG)
+        assert v is not None and v["decision"] == "deny", cmd
+        assert "*/.claude/settings.json" in v["reason"], cmd
+
+
+# 絶対パスのパターン(ワイルドカード無し)は、`./`・`../` の畳み込みとイベント cwd の使用を
+# 厳密に要求する(`*` パターンは `/` をまたぐため、正規化が無くても当たってしまい区別できない)
+ABS_CFG = dict(CFG, write_protected_paths=["/home/alice/proj/.loop/state.json"])
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo x > .loop/state.json",                           # 相対 → cwd で絶対化
+    "echo x > ./.loop/state.json",                         # ./ を畳む
+    "echo x > ../proj/.loop/state.json",                   # ../ を畳む
+    "echo x > /home/alice/other/../proj/.loop/state.json", # 絶対でも ../ を畳む
+])
+def test_write_protected_absolute_pattern_matches_after_normalization(cmd):
+    v = secrets_guard.evaluate(_event("Bash", command=cmd, cwd=PROJ), ABS_CFG)
+    assert v is not None and v["decision"] == "deny", cmd
+    assert "/home/alice/proj/.loop/state.json" in v["reason"], cmd
+
+
+def test_write_protected_uses_event_cwd_not_process_cwd():
+    # 同じ相対トークンでも、別プロジェクトの cwd から見れば保護対象のファイルではない
+    v = secrets_guard.evaluate(
+        _event("Bash", command="echo x > .loop/state.json", cwd="/home/alice/other"), ABS_CFG)
+    assert v is None
