@@ -56,6 +56,9 @@ def test_bash_guard_force_push_still_denied_with_unapproved_project(tmp_path, pr
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    # 通知が出ていること = 信頼判定が実際に走って不採用にした証跡。これが無いと、
+    # bash_guard の判定に触れない形状では「ゲートが壊れても deny のまま」通ってしまう。
+    assert "未承認のため無視しました" in out["systemMessage"]
 
 
 @pytest.mark.parametrize("shape", [
@@ -63,7 +66,12 @@ def test_bash_guard_force_push_still_denied_with_unapproved_project(tmp_path, pr
     {"exfil_guard": None}, {"exfil_guard": True}, {"exfil_guard": 1.5},
 ])
 def test_global_hardening_survives_unapproved_project_type_confusion(monkeypatch, tmp_path, shape):
-    """グローバルで強化した値が、非承認プロジェクトの型すり替えで既定値へ戻らない。"""
+    """グローバルで強化した値が、非承認プロジェクトの型すり替えで既定値へ戻らない。
+
+    これは信頼層(0.7.0)ではなく層ごと縮退(spec #5、0.6.1)が担保する性質で、
+    ゲートを無効にしても成立する。承認済みの設定が型すり替えを持ち込んだ場合の
+    防御でもあるため、非承認の文脈でも二重に固定しておく。
+    """
     g = tmp_path / "global.json"
     g.write_text(json.dumps({"exfil_guard": {"mode": "always", "categories": {"pii": "deny"}},
                              "bash_guard": {"extra_deny": ["danger"]}}), encoding="utf-8")
