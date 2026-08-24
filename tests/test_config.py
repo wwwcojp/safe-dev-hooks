@@ -1527,7 +1527,22 @@ def test_skipped_config_dirs_tolerates_unreadable_ancestor(tmp_path):
 
 
 def test_load_config_survives_unreadable_ancestor(monkeypatch, tmp_path):
-    """読めない祖先があっても設定全体が DEFAULTS へ縮退しない(例外が外側まで飛ばない)。"""
+    """読めない祖先があっても設定全体が DEFAULTS へ縮退しない(例外が外側まで飛ばない)。
+
+    cwd 自身(pkg)にはプロジェクト設定が無いため、_read_layer はプロジェクト層の
+    パス(pkg/.claude-hooks.json)を Path.is_file() で stat する。祖先 blocked に
+    実行権限が無いと、3.10-3.13 ではこの stat が PermissionError を送出し、
+    _read_layer の except OSError で正当に catch されて cfg["_errors"] に1件
+    記録される(縮退ではなく「読めなかった層」の正しい報告)。3.14 以降は pathlib が
+    EACCES を飲むため記録されない。つまり _errors の中身(空か1件か)はバージョン依存
+    であり、ここで固定すべき不変プロパティではない。固定すべきは「グローバル層の値が
+    消えず(DEFAULTS へ丸ごと縮退しない)、例外も外へ漏れない」こと。
+    祖先探索側(_skipped_config_dirs が素の Path.is_file() に戻る回帰)は姉妹テスト
+    test_skipped_config_dirs_tolerates_unreadable_ancestor が直接固定している一方、
+    ここでも間接的に効く: その回帰が起きれば例外が load_config の except まで飛び、
+    cfg 全体が DEFAULTS へ縮退して write_protected_paths が空リストに戻るため、
+    下の assert が 3.10-3.13 で失敗する。
+    """
     if os.geteuid() == 0:
         return
     _outer, blocked, cwd = _make_unreadable_ancestor(tmp_path)
@@ -1540,5 +1555,10 @@ def test_load_config_survives_unreadable_ancestor(monkeypatch, tmp_path):
         cfg = config.load_config(str(cwd))
     finally:
         blocked.chmod(0o755)
-    assert cfg["_errors"] == []
-    assert cfg["secrets_guard"]["write_protected_paths"] == ["*/x.txt"]  # 縮退していない
+    # 縮退していない証跡: グローバル層の値が生きている(DEFAULTS の空リストに落ちていない)。
+    assert cfg["secrets_guard"]["write_protected_paths"] == ["*/x.txt"]
+    # 記録されるとしても「読み込み全体の失敗」ではなく読めなかった特定パス1件のみ。
+    assert all(
+        "設定の読み込みに失敗したため既定値を使用します" not in e for e in cfg["_errors"]
+    )
+    assert len(cfg["_errors"]) <= 1

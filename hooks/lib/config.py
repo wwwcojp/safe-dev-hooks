@@ -299,8 +299,9 @@ def _skipped_config_dirs(cwd: str, root: str | None) -> list[str]:
     for d in [start, *start.parents]:
         if str(d) == root_real:
             continue
-        # Path.is_file() は 3.10-3.12 で読めない祖先に対し PermissionError を送出する
-        # (3.13+ は飲む)。os.path.isfile は全 OSError/ValueError を飲むのでこちらを使う。
+        # Path.is_file() は 3.10-3.13 で読めない祖先に対し PermissionError を送出する
+        # (3.14+ は飲む。実測: 3.10.12/3.11.15/3.12.13/3.13.14 は送出、3.14.6 は飲む)。
+        # os.path.isfile は全 OSError/ValueError を飲むのでこちらを使う。
         if os.path.isfile(d / PROJECT_CONFIG_NAME):
             found.append(str(d))
     return found
