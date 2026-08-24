@@ -85,7 +85,7 @@ def test_audit_log_does_not_emit_skipped_project_notice(monkeypatch, capsys, tmp
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    cwd = tmp_path / "cwd"
+    cwd = root / "cwd"
     cwd.mkdir()
     (cwd / ".claude-hooks.json").write_text('{"notify": {"method": "bell"}}', encoding="utf-8")
     event = {"hook_event_name": "Stop", "cwd": str(cwd), "session_id": "s"}

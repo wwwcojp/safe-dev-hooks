@@ -796,11 +796,10 @@ def test_validate_revert_deep_copies_nested_category_value():
 
 def test_project_root_prefers_claude_project_dir_env(monkeypatch, tmp_path):
     root = tmp_path / "root"
-    root.mkdir()
-    other = tmp_path / "elsewhere"
-    other.mkdir()
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    assert config.project_root(str(other)) == str(root)
+    assert config.project_root(str(sub)) == str(root)
 
 
 def test_project_root_empty_env_is_treated_as_unset(monkeypatch, tmp_path):
@@ -855,9 +854,10 @@ def test_project_root_swallows_oserror_from_ancestor_exists(monkeypatch, tmp_pat
 
 
 def test_project_root_env_overrides_even_when_cwd_has_git(monkeypatch, tmp_path):
+    """env が cwd の祖先であれば、cwd 自身が git ルートでも env が優先される。"""
     env_root = tmp_path / "env-root"
     env_root.mkdir()
-    git_root = tmp_path / "git-root"
+    git_root = env_root / "inner"
     (git_root / ".git").mkdir(parents=True)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(env_root))
     assert config.project_root(str(git_root)) == str(env_root)
@@ -877,7 +877,7 @@ def test_load_config_uses_claude_project_dir_env_with_differing_cwd(monkeypatch,
     )
     approve_project(monkeypatch, tmp_path / "global.json", env_root, pinned=True)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(env_root))
-    cwd = tmp_path / "other-cwd"
+    cwd = env_root / "other-cwd"
     cwd.mkdir()  # env_root とは別ディレクトリで、独自の .claude-hooks.json は置かない
     cfg = config.load_config(str(cwd))
     assert cfg["notify"]["method"] == "bell"
@@ -944,7 +944,7 @@ def test_load_config_notifies_when_cwd_has_config_but_root_differs(monkeypatch, 
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    cwd = tmp_path / "cwd"
+    cwd = root / "cwd"
     cwd.mkdir()
     (cwd / ".claude-hooks.json").write_text(
         json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
@@ -959,7 +959,7 @@ def test_load_config_skipped_notice_respects_cooldown(monkeypatch, tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    cwd = tmp_path / "cwd"
+    cwd = root / "cwd"
     cwd.mkdir()
     (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
     first = config.load_config(str(cwd))
@@ -975,7 +975,7 @@ def test_load_config_skipped_notice_cooldown_zero_notifies_every_time(monkeypatc
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    cwd = tmp_path / "cwd"
+    cwd = root / "cwd"
     cwd.mkdir()
     (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
     assert len(config.load_config(str(cwd))["_notices"]) == 1
@@ -990,7 +990,7 @@ def test_load_config_skipped_notice_notifies_every_time_when_state_unusable(monk
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    cwd = tmp_path / "cwd"
+    cwd = root / "cwd"
     cwd.mkdir()
     (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
     assert len(config.load_config(str(cwd))["_notices"]) == 1
@@ -1011,7 +1011,7 @@ def test_load_config_no_skipped_notice_when_cwd_has_no_config_file(monkeypatch, 
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
-    cwd = tmp_path / "cwd"
+    cwd = root / "cwd"
     cwd.mkdir()  # .claude-hooks.json を置かない
     cfg = config.load_config(str(cwd))
     assert cfg["_notices"] == []
@@ -1117,3 +1117,247 @@ def test_quiet_load_never_raises_on_bad_input(monkeypatch, tmp_path):
     cfg = config.load_config(str(tmp_path), notices=False)
     assert cfg["_notices"] == []
     assert cfg["_errors"] == ["設定の読み込みに失敗したため既定値を使用します: boom"]
+
+
+# ---- I1/M1: CLAUDE_PROJECT_DIR の検証(_env_root) ----
+
+
+def test_env_root_rejects_relative_path(monkeypatch, tmp_path):
+    """相対パスはフックプロセスの cwd 基準で解決されてしまうので採用しない。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "sub"
+    sub.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "sub")
+    assert config.project_root(str(sub)) == str(root)  # git 探索へフォールバック
+
+
+def test_env_root_rejects_nonexistent_directory(monkeypatch, tmp_path):
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "does-not-exist"))
+    assert config.project_root(str(root)) == str(root)
+
+
+def test_env_root_rejects_plain_file(monkeypatch, tmp_path):
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    plain = root / "afile"
+    plain.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(plain))
+    assert config.project_root(str(root)) == str(root)
+
+
+def test_env_root_rejects_unrelated_directory(monkeypatch, tmp_path):
+    """cwd の祖先でない値は採用しない(敵対的な `.claude/settings.json` の env 対策)。"""
+    other = tmp_path / "other"
+    other.mkdir()
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(other))
+    assert config.project_root(str(sub)) == str(root)
+
+
+def test_env_root_rejects_descendant_of_cwd(monkeypatch, tmp_path):
+    """cwd の子孫(祖先でない)も採用しない。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    deeper = root / "deeper"
+    deeper.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(deeper))
+    assert config.project_root(str(root)) == str(root)
+
+
+def test_env_root_accepts_cwd_itself(monkeypatch, tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    assert config.project_root(str(root)) == str(root)
+
+
+def test_env_root_accepts_ancestor_through_symlinked_cwd(monkeypatch, tmp_path):
+    """祖先判定は realpath 基準(シンボリックリンク経由の cwd でも正しく祖先と分かる)。"""
+    root = tmp_path / "root"
+    sub = root / "sub"
+    sub.mkdir(parents=True)
+    link = tmp_path / "link-to-sub"
+    link.symlink_to(sub)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    assert config.project_root(str(link)) == str(root)
+
+
+def test_env_root_used_when_cwd_is_none(monkeypatch, tmp_path):
+    """cwd が無ければ祖先判定のしようがないので、ディレクトリでありさえすれば使う。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    assert config.project_root(None) == str(root)
+
+
+def test_env_root_rejects_nondirectory_when_cwd_is_none(monkeypatch, tmp_path):
+    plain = tmp_path / "afile"
+    plain.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(plain))
+    assert config.project_root(None) is None
+
+
+def test_env_root_swallows_oserror_from_isdir(monkeypatch, tmp_path):
+    """検証中に OSError が起きても例外を外へ出さず git 探索へ落ちる。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+
+    def boom(_path):
+        raise OSError("denied")
+
+    monkeypatch.setattr(os.path, "isdir", boom)
+    assert config.project_root(str(root)) == str(root)
+
+
+def test_add_dir_style_cwd_outside_session_root_uses_its_own_git_root(monkeypatch, tmp_path):
+    """`/add-dir` 等で cwd がセッションルート外に出た場合はエラーでなくフォールバック。
+
+    その場所の git ルートが基準になり、そこの承認済み設定がちゃんと適用される。
+    """
+    session_root = tmp_path / "session"
+    (session_root / ".git").mkdir(parents=True)
+    added = tmp_path / "added"
+    (added / ".git").mkdir(parents=True)
+    (added / ".claude-hooks.json").write_text(
+        json.dumps({"secrets_guard": {"write_protected_paths": ["added.txt"]}}), encoding="utf-8"
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", added, pinned=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(session_root))
+    cwd = added / "pkg"
+    cwd.mkdir()
+    cfg = config.load_config(str(cwd))
+    assert cfg["secrets_guard"]["write_protected_paths"] == ["added.txt"]
+    assert cfg["_errors"] == []
+    assert cfg["_notices"] == []  # 異常ではないので通知も出さない
+
+
+def test_env_cannot_substitute_another_approved_projects_config(monkeypatch, tmp_path):
+    """env で「別の承認済みプロジェクト」の緩和設定を持ち込めない(I1 の主要ケース)。"""
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (proj / ".claude-hooks.json").write_text(
+        json.dumps({"secrets_guard": {"write_protected_paths": ["*/secret.txt"]}}),
+        encoding="utf-8",
+    )
+    other = tmp_path / "other"
+    (other / ".git").mkdir(parents=True)
+    (other / ".claude-hooks.json").write_text(
+        json.dumps({"secrets_guard": {"allow_paths": ["*.env"]},
+                    "bash_guard": {"allow": ["ANYTHING"]}}),
+        encoding="utf-8",
+    )
+    global_path = tmp_path / "global.json"
+    approve_project(monkeypatch, global_path, proj, pinned=True)
+    existing = json.loads(global_path.read_text(encoding="utf-8"))
+    approve_project(monkeypatch, global_path, other, global_cfg=existing, pinned=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(other))
+    sub = proj / "sub"
+    sub.mkdir()
+    cfg = config.load_config(str(sub))
+    assert cfg["secrets_guard"]["write_protected_paths"] == ["*/secret.txt"]  # proj のまま
+    assert cfg["secrets_guard"]["allow_paths"] == []
+    assert cfg["bash_guard"]["allow"] == []
+
+
+# ---- I1(b)/I2: 落ちたプロジェクト層は cwd 直下に無くても通知する ----
+
+
+def test_notifies_when_env_anchor_drops_the_real_project_config(monkeypatch, tmp_path):
+    """env が本来のプロジェクトルートの上位を指し、ルート直下の設定が落ちる場合(D3)。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    workspace = tmp_path / "workspace"
+    proj = workspace / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (proj / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    sub = proj / "sub"
+    sub.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(workspace))  # cwd の祖先なので採用される
+    cfg = config.load_config(str(sub))
+    assert cfg["_notices"] == [
+        trust.skipped_notice(os.path.realpath(str(proj)), str(workspace))
+    ]
+
+
+def test_notifies_when_nested_git_re_anchors_below_the_project(monkeypatch, tmp_path):
+    """vendored clone / submodule のネストした `.git` で親の設定が落ちる場合(I2)。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (proj / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    dep = proj / "vendor" / "dep"
+    (dep / ".git").mkdir(parents=True)
+    src = dep / "src"
+    src.mkdir()
+    cfg = config.load_config(str(src))
+    assert cfg["_notices"] == [
+        trust.skipped_notice(os.path.realpath(str(proj)), str(dep))
+    ]
+
+
+def test_notifies_when_submodule_git_file_re_anchors(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (proj / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    smod = proj / "smod"
+    smod.mkdir()
+    (smod / ".git").write_text("gitdir: ../.git/modules/smod", encoding="utf-8")
+    cfg = config.load_config(str(smod))
+    assert cfg["_notices"] == [
+        trust.skipped_notice(os.path.realpath(str(proj)), str(smod))
+    ]
+
+
+def test_skipped_config_dirs_skips_the_adopted_root(tmp_path):
+    """基準ディレクトリ自身は「読まなかった」場所ではないので列挙しない。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    sub = root / "sub"
+    sub.mkdir()
+    assert config._skipped_config_dirs(str(sub), str(root)) == []
+
+
+def test_skipped_config_dirs_lists_from_cwd_upward(tmp_path):
+    """cwd 側と祖先側の両方を、近い順に列挙する。"""
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    cwd = inner / "cwd"
+    cwd.mkdir(parents=True)
+    for d in (outer, cwd):
+        (d / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    found = config._skipped_config_dirs(str(cwd), str(inner))
+    assert found == [os.path.realpath(str(cwd)), os.path.realpath(str(outer))]
+
+
+def test_skipped_config_dirs_compares_by_realpath(tmp_path):
+    """root がシンボリックリンク表記でも、同じ実ディレクトリなら列挙しない。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    link = tmp_path / "link"
+    link.symlink_to(root)
+    sub = root / "sub"
+    sub.mkdir()
+    assert config._skipped_config_dirs(str(sub), str(link)) == []
+
+
+def test_skipped_notices_uses_independent_cooldown_per_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    outer = tmp_path / "outer"
+    proj = outer / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (outer / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    (proj / "sub").mkdir()
+    (proj / "sub" / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    first = config.load_config(str(proj / "sub"))
+    second = config.load_config(str(proj / "sub"))
+    assert len(first["_notices"]) == 2   # sub と outer、それぞれ独立に通知
+    assert second["_notices"] == []      # どちらもクールダウン中

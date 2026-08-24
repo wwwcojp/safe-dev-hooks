@@ -74,11 +74,12 @@ def project_root(cwd: str | None = None) -> str | None:
 
     event["cwd"] は Bash の cd に追従する一時的な作業ディレクトリなので基準にできない。
     Claude Code がフックに渡すセッション開始時のプロジェクトルート CLAUDE_PROJECT_DIR を
-    優先し、無ければ cwd の最近傍の git ルート、それも無ければ cwd に戻す(D1)。
+    優先し(ただし `_env_root` の検証を通ったものだけ)、無ければ cwd の最近傍の git
+    ルート、それも無ければ cwd に戻す(D1)。
     例外は投げない。cwd が None のときは git 探索を行わず None を返す。
     """
-    env_root = os.environ.get(PROJECT_DIR_ENV)
-    if env_root:
+    env_root = _env_root(cwd)
+    if env_root is not None:
         return env_root
     if cwd is None:
         return None
@@ -86,6 +87,42 @@ def project_root(cwd: str | None = None) -> str | None:
     if git_root is not None:
         return git_root
     return cwd
+
+
+def _env_root(cwd: str | None) -> str | None:
+    """CLAUDE_PROJECT_DIR を検証し、基準として採用できる場合のみ返す(D3)。
+
+    採用条件は次の 3 つ。満たさなければ None を返し、呼び出し元は git 探索へ落ちる。
+
+    1. 空文字でない(空文字は未設定と同じ扱い)
+    2. 実在するディレクトリである(相対パス・存在しないパス・通常ファイルを弾く)
+    3. cwd 自身、または cwd の祖先である
+
+    3 が要である。この環境変数はリポジトリ同梱の `.claude/settings.json` の `env` で
+    差し替えられ得るため、無検証だと敵対的リポジトリが基準を無関係な場所へずらして
+    (a) 本来のプロジェクト層を落とす、(b) 利用者が別途承認済みの他プロジェクトの
+    緩和設定(`allow_paths`・`bash_guard.allow`)を持ち込む、の両方ができてしまう。
+    ハーネスが注入する正規の値はセッション開始ディレクトリなので通常は cwd の祖先で
+    あり、この制約は正当な用途を壊さない。`/add-dir` などでセッションルートの外を
+    作業している場合はここで不採用になるが、その場合は「実際に作業しているディレクトリ
+    の git ルート」が基準になる — 異常ではなく、むしろそちらが正しいアンカーである。
+    例外は投げない。
+    """
+    value = os.environ.get(PROJECT_DIR_ENV)
+    if not value:
+        return None
+    try:
+        if not os.path.isdir(value):
+            return None
+        if cwd is None:
+            return value  # 比較対象が無い(祖先判定ができない)ので値をそのまま使う
+        env_path = Path(os.path.realpath(value))
+        cwd_path = Path(os.path.realpath(cwd))
+        if cwd_path == env_path or env_path in cwd_path.parents:
+            return value
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 def _nearest_git_root(cwd: str) -> str | None:
@@ -190,24 +227,50 @@ def _load_config(cwd: str | None = None, *, notices: bool) -> dict:
 
 
 def _skipped_notices(cwd: str | None, root: str | None, cooldown_raw) -> list[str]:
-    """cwd に .claude-hooks.json があるのに基準(root)が別ディレクトリで読まなかった場合の通知(D2)。
+    """基準(root)以外の場所にあるため読まなかった .claude-hooks.json を通知する(D2)。
 
     0.7.1 でプロジェクト設定の探索基準を event["cwd"] から project_root(cwd) へ移した
     ことにより、モノレポのサブパッケージ設定などが無言で読まれなくなる経路ができた。
-    無視した設定は必ず通知する(0.7.0 の原則)ため、ここで cwd 側の存在だけを確認し
+    無視した設定は必ず通知する(0.7.0 の原則)ため、ここで存在だけを確認し
     (JSONとして解析はしない — 未承認の内容を解析対象にする必要は無い)、通知文と
-    クールダウンの管理は trust.py に委ねる。
+    クールダウンの管理は trust.py に委ねる。通知は場所ごとに独立したクールダウンを持つ。
     root は project_root(cwd) の戻り値。project_root は cwd が非 None のとき常に str を
     返す契約なので、cwd が None でない限り root も None にはならない。cwd が None のとき
     (event に cwd が無い呼び出し)は比較する対象自体が無いため何もしない。
     """
     if cwd is None:
         return []
-    if os.path.realpath(cwd) == os.path.realpath(root):
-        return []
-    if not (Path(cwd) / PROJECT_CONFIG_NAME).is_file():
-        return []
-    return trust.notify_skipped(cwd, root, trust.cooldown_seconds(cooldown_raw))
+    cooldown = trust.cooldown_seconds(cooldown_raw)
+    out: list[str] = []
+    for skipped in _skipped_config_dirs(cwd, root):
+        out.extend(trust.notify_skipped(skipped, root, cooldown))
+    return out
+
+
+def _skipped_config_dirs(cwd: str, root: str | None) -> list[str]:
+    """cwd とその祖先のうち、基準(root)以外で .claude-hooks.json を持つ場所を列挙する。
+
+    cwd 直下だけを見ると、次の 2 つの「無言の保護喪失」を通知できない。どちらも
+    cwd 自身には設定ファイルが無く、落ちる設定は cwd の祖先にあるためである。
+
+    - 環境変数 CLAUDE_PROJECT_DIR で基準を上位ディレクトリへずらされ、本来の
+      プロジェクトルート直下の設定が落ちる(D3。`_env_root` の祖先制約と対になる)
+    - vendored clone・submodule・worktree のようにネストした `.git` が基準を
+      下位へ移し、親プロジェクトの設定が落ちる
+
+    祖先も含めて列挙することで「見つけたのに読まなかった設定は必ず通知する」を
+    経路によらず成立させる。比較は realpath 化した実パスで行う(trust.project_key
+    と同じ基準なので、通知のキーと承認キーが同じ表記になる)。
+    """
+    root_real = os.path.realpath(root)
+    start = Path(os.path.realpath(cwd))
+    found: list[str] = []
+    for d in [start, *start.parents]:
+        if str(d) == root_real:
+            continue
+        if (d / PROJECT_CONFIG_NAME).is_file():
+            found.append(str(d))
+    return found
 
 
 def _validate(cfg: dict, fallback: dict, errors: list) -> dict:
