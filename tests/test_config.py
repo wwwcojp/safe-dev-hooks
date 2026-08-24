@@ -1123,13 +1123,99 @@ def test_quiet_load_never_raises_on_bad_input(monkeypatch, tmp_path):
 
 
 def test_env_root_rejects_relative_path(monkeypatch, tmp_path):
-    """相対パスはフックプロセスの cwd 基準で解決されてしまうので採用しない。"""
+    """相対パスはフックプロセスの cwd 基準で解決されてしまうので採用しない。
+
+    フックプロセスの cwd を明示的に固定する: 素の "sub" 相対値が「たまたま
+    その cwd から見て実在しない」ことに依存すると、テスト実行時の実際の
+    プロセス cwd 次第で偽陰性になる(=バグを検出できない)。ここでは逆に
+    プロセス cwd を `root` へ固定し、"sub" が **そこから見て実在するディレクトリ
+    になる** ようにしたうえで、それでも採用されないことを確認する。
+    """
     root = tmp_path / "root"
     (root / ".git").mkdir(parents=True)
     sub = root / "sub"
     sub.mkdir()
+    monkeypatch.chdir(root)
+    assert os.path.isdir("sub")  # 前提: プロセス cwd から見て実在する
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", "sub")
+    assert config._env_root(str(sub)) is None
     assert config.project_root(str(sub)) == str(root)  # git 探索へフォールバック
+
+
+def test_env_root_rejects_relative_path_even_when_process_cwd_lacks_it(monkeypatch, tmp_path):
+    """対照: プロセス cwd から見ても実在しない場合(isdir 自体が False)も同じく None。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert not os.path.isdir("sub")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "sub")
+    assert config._env_root(str(sub)) is None
+
+
+def test_env_root_rejects_dot(monkeypatch, tmp_path):
+    """"." はプロセス cwd 自身を指す相対パスであり、実在チェックを素通りしてしまう。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", ".")
+    assert config._env_root(str(root)) is None
+    # git 探索へフォールバック(結果は同じ root でも経路が違う)
+    assert config.project_root(str(root)) == str(root)
+
+
+def test_env_root_rejects_dotdot_even_when_it_resolves_to_real_ancestor(monkeypatch, tmp_path):
+    """".." がプロセス cwd 基準でたまたま cwd の実祖先に一致しても、相対パスなので採用しない。
+
+    採用してしまうと、祖先制約(条件3)は「相対パスがプロセス cwd から見て
+    ancestor 相当に解決されるかどうか」という、event cwd とは無関係な基準に
+    すり替わる。ここでは意図的にプロセス cwd を `sub` へ固定し、".." が
+    realpath 上「たまたま」cwd(= sub)の実の祖先である `root` に一致する
+    状況を作ったうえで、それでも None になることを確認する。
+    """
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "sub"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    assert os.path.realpath("..") == str(root)  # 前提: ".." は実際に cwd の祖先に一致する
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "..")
+    assert config._env_root(str(sub)) is None
+    assert config.project_root(str(sub)) == str(root)  # git 探索へフォールバック
+
+
+def test_env_root_rejects_relative_path_when_cwd_is_none(monkeypatch, tmp_path):
+    """cwd が None のときは祖先判定自体をスキップする分岐があるが、絶対パス条件は先に効く。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", ".")
+    assert config._env_root(None) is None
+
+
+def test_env_root_accepts_absolute_existing_directory(monkeypatch, tmp_path):
+    """絶対パスで実在するディレクトリは(他の条件を満たす限り)引き続き採用する。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    assert config._env_root(str(root)) == str(root)
+
+
+def test_env_root_rejects_nonexistent_absolute_path(monkeypatch, tmp_path):
+    missing = tmp_path / "does-not-exist"
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(missing))
+    assert config._env_root(str(tmp_path)) is None
+
+
+def test_env_root_rejects_absolute_plain_file(monkeypatch, tmp_path):
+    plain = tmp_path / "afile"
+    plain.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(plain))
+    assert config._env_root(str(tmp_path)) is None
+
+
+def test_env_root_rejects_empty_string(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+    assert config._env_root(str(tmp_path)) is None
 
 
 def test_env_root_rejects_nonexistent_directory(monkeypatch, tmp_path):
@@ -1498,6 +1584,27 @@ def test_rejected_env_dir_reports_descendant_of_cwd(monkeypatch, tmp_path):
     (deeper / ".claude-hooks.json").write_text("{}", encoding="utf-8")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(deeper))
     assert config._rejected_env_dir(str(tmp_path)) == str(deeper)
+
+
+def test_rejected_env_dir_ignores_relative_value_even_if_it_looks_like_a_hit(monkeypatch, tmp_path):
+    """相対値はプロセス cwd 基準でしか解決できないため、「見つけた」ことにして通知しない。
+
+    プロセス cwd 直下にたまたま `.claude-hooks.json` を置き、素朴な
+    `os.path.join(value, PROJECT_CONFIG_NAME)` + `os.path.isfile` の実装なら
+    「見つかった」と誤判定してしまう状況を作る。これは実際のプロジェクトの
+    設定ではなく、プロセス cwd に依存した偽の一致なので通知してはならない。
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / config.PROJECT_CONFIG_NAME).write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", ".")
+    assert config._rejected_env_dir(str(tmp_path)) is None
+
+
+def test_rejected_env_dir_ignores_relative_value_without_process_cwd_hit(monkeypatch, tmp_path):
+    """対照: プロセス cwd から見ても一致しない相対値も同じく None(例外にもならない)。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "sub")
+    assert config._rejected_env_dir(str(tmp_path)) is None
 
 
 # ---- 読めない祖先ディレクトリがあっても設定読み込みを壊さない ----

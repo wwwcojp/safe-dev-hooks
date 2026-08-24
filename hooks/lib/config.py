@@ -92,13 +92,15 @@ def project_root(cwd: str | None = None) -> str | None:
 def _env_root(cwd: str | None) -> str | None:
     """CLAUDE_PROJECT_DIR を検証し、基準として採用できる場合のみ返す(D3)。
 
-    採用条件は次の 3 つ。満たさなければ None を返し、呼び出し元は git 探索へ落ちる。
+    採用条件は次の 4 つ。満たさなければ None を返し、呼び出し元は git 探索へ落ちる。
 
     1. 空文字でない(空文字は未設定と同じ扱い)
-    2. 実在するディレクトリである(相対パス・存在しないパス・通常ファイルを弾く)
-    3. cwd 自身、または cwd の祖先である
+    2. 絶対パスである(相対パスはフックプロセスの cwd 基準で解決されてしまい、
+       event の cwd と無関係な場所を指しかねないので、実在確認より前に弾く)
+    3. 実在するディレクトリである(存在しないパス・通常ファイルを弾く)
+    4. cwd 自身、または cwd の祖先である
 
-    3 が要である。この環境変数はリポジトリ同梱の `.claude/settings.json` の `env` で
+    4 が要である。この環境変数はリポジトリ同梱の `.claude/settings.json` の `env` で
     差し替えられ得るため、無検証だと敵対的リポジトリが基準を無関係な場所へずらして
     (a) 本来のプロジェクト層を落とす、(b) 利用者が別途承認済みの他プロジェクトの
     緩和設定(`allow_paths`・`bash_guard.allow`)を持ち込む、の両方ができてしまう。
@@ -114,6 +116,8 @@ def _env_root(cwd: str | None) -> str | None:
     if not value:
         return None
     try:
+        if not os.path.isabs(value):
+            return None  # 相対パスはフックプロセスの cwd 基準で解決されてしまうため弾く
         if not os.path.isdir(value):
             return None
         if cwd is None:
@@ -138,10 +142,15 @@ def _rejected_env_dir(cwd: str | None) -> str | None:
     よらず成立させる。**採用はしない** — 祖先制約(=持ち込み封じ)は一切緩めず、
     可視性だけを足す。
     そこに `.claude-hooks.json` が無ければ落ちた保護も無いので何も返さない。
+    値が相対パスの場合、`os.path.join(value, ...)` はフックプロセスの cwd 基準で解決
+    されてしまい、event の cwd や実際のプロジェクトと無関係な場所を「見つけた」ことに
+    しかねない(`_env_root` が絶対パスを要求するのと同じ理由)。その場所は event cwd
+    から見て素性が分からない以上、通知として提示すべき実在の場所ではないので、
+    採用判定と同じ理由で最初から対象外にする(可視性を偽って作らない)。
     例外は投げない(`os.path.isfile` は OSError/ValueError を飲む)。
     """
     value = os.environ.get(PROJECT_DIR_ENV)
-    if not value:
+    if not value or not os.path.isabs(value):
         return None
     if _env_root(cwd) is not None:
         return None  # 採用された = 落ちていない
