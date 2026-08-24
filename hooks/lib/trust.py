@@ -236,6 +236,23 @@ def skipped_notice(key: str, root: str) -> str:
     )
 
 
+def rejected_env_notice(key: str, root: str) -> str:
+    """不採用にした CLAUDE_PROJECT_DIR 配下の .claude-hooks.json を知らせる通知文を返す。
+
+    N1: 0.7.1 の祖先制約で環境変数由来のアンカーを不採用にすると、そのプロジェクトの
+    設定層が丸ごと落ちる。落ちた設定は cwd の祖先ではなく別枝にあるので
+    `skipped_notice` の経路(祖先の探索)では拾えない。理由が違えば利用者が取るべき
+    行動も違う(基準ディレクトリへの統合ではなく「そのプロジェクト配下で作業する」)ため、
+    文面を分けている。
+    """
+    return (
+        f"[safe-dev-hooks] {key} の .claude-hooks.json は読みませんでした。\n"
+        "環境変数 CLAUDE_PROJECT_DIR はこの場所を指していますが、現在の作業ディレクトリの\n"
+        f"祖先ではないため、プロジェクトの基準として採用していません(現在の基準: {root})。\n"
+        "この設定を有効にしたい場合は、そのプロジェクト配下のディレクトリで作業してください。"
+    )
+
+
 def notify_skipped(
     skipped_dir: str,
     root: str,
@@ -247,13 +264,40 @@ def notify_skipped(
     """基準ディレクトリと異なる場所にあり読まなかった .claude-hooks.json を通知する。
 
     D2: クールダウン付き。実体は `_notify_skipped`。
+    """
+    return _notify_once(skipped_dir, root, cooldown_sec, skipped_notice, now, state_path)
+
+
+def notify_rejected_env(
+    env_dir: str,
+    root: str,
+    cooldown_sec: int,
+    *,
+    now: float | None = None,
+    state_path: Path | None = None,
+) -> list[str]:
+    """検証で不採用にした CLAUDE_PROJECT_DIR 配下の .claude-hooks.json を通知する(N1)。
+
+    クールダウンと状態(`skipped_last`)は `notify_skipped` と共有する — どちらも
+    「見つけたのに読まなかった設定」の通知であり、場所ごとに独立した枠でよい。
+    違うのは文面(=利用者が取るべき行動)だけ。
+    """
+    return _notify_once(env_dir, root, cooldown_sec, rejected_env_notice, now, state_path)
+
+
+def _notify_once(skipped_dir, root, cooldown_sec, build, now, state_path) -> list[str]:
+    """読まなかった設定の通知をクールダウン付きで 1 件返す共通経路。
+
     gate() と同じ理由で、ここでの try/except が最後の砦 —
     呼び出し元(config.py)を落とさないよう、この境界で捕捉して「通知なし」に倒す。
-    D2 は可視性の追加機能であり deny 判定そのものではないため、失敗時は
+    可視性の追加機能であり deny 判定そのものではないため、失敗時は
     (gate() と違って)失敗自体を知らせる通知は出さず、静かに「通知なし」に倒す。
+    `build` は通知文を組み立てる関数(`skipped_notice` / `rejected_env_notice`)。
     """
     try:
-        return _notify_skipped(skipped_dir, root, cooldown_sec, now=now, state_path=state_path)
+        return _notify_skipped(
+            skipped_dir, root, cooldown_sec, build, now=now, state_path=state_path,
+        )
     except Exception:
         return []
 
@@ -262,6 +306,7 @@ def _notify_skipped(
     skipped_dir: str,
     root: str,
     cooldown_sec: int,
+    build,
     *,
     now: float | None = None,
     state_path: Path | None = None,
@@ -278,4 +323,4 @@ def _notify_skipped(
         return []
     state["skipped_last"][key] = now
     save_state(state, state_path)
-    return [skipped_notice(key, root)]
+    return [build(key, root)]

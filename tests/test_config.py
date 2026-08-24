@@ -1227,9 +1227,12 @@ def test_add_dir_style_cwd_outside_session_root_uses_its_own_git_root(monkeypatc
     """`/add-dir` 等で cwd がセッションルート外に出た場合はエラーでなくフォールバック。
 
     その場所の git ルートが基準になり、そこの承認済み設定がちゃんと適用される。
+    エラー(`_errors`)ではないが、セッションルート側の設定は落ちているので
+    通知は出る(N1。無言で落とさない)。
     """
     session_root = tmp_path / "session"
     (session_root / ".git").mkdir(parents=True)
+    (session_root / ".claude-hooks.json").write_text("{}", encoding="utf-8")
     added = tmp_path / "added"
     (added / ".git").mkdir(parents=True)
     (added / ".claude-hooks.json").write_text(
@@ -1241,8 +1244,26 @@ def test_add_dir_style_cwd_outside_session_root_uses_its_own_git_root(monkeypatc
     cwd.mkdir()
     cfg = config.load_config(str(cwd))
     assert cfg["secrets_guard"]["write_protected_paths"] == ["added.txt"]
+    assert cfg["_errors"] == []  # 異常ではない
+    assert cfg["_notices"] == [
+        trust.rejected_env_notice(os.path.realpath(str(session_root)), str(added))
+    ]
+
+
+def test_add_dir_style_is_silent_when_session_root_has_no_config(monkeypatch, tmp_path):
+    """セッションルート側に設定が無ければ落ちた保護も無いので通知しない。"""
+    session_root = tmp_path / "session"
+    (session_root / ".git").mkdir(parents=True)  # .claude-hooks.json は置かない
+    added = tmp_path / "added"
+    (added / ".git").mkdir(parents=True)
+    (added / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", added, pinned=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(session_root))
+    cwd = added / "pkg"
+    cwd.mkdir()
+    cfg = config.load_config(str(cwd))
+    assert cfg["_notices"] == []
     assert cfg["_errors"] == []
-    assert cfg["_notices"] == []  # 異常ではないので通知も出さない
 
 
 def test_env_cannot_substitute_another_approved_projects_config(monkeypatch, tmp_path):
@@ -1368,6 +1389,115 @@ def test_skipped_notices_uses_independent_cooldown_per_directory(monkeypatch, tm
     second = config.load_config(str(proj / "sub"))
     assert len(first["_notices"]) == 2   # sub と outer、それぞれ独立に通知
     assert second["_notices"] == []      # どちらもクールダウン中
+
+
+# ---- N1: 不採用にした CLAUDE_PROJECT_DIR の設定も無言では落とさない ----
+
+
+def _project_outside_cwd(monkeypatch, tmp_path, body='{"notify": {"method": "bell"}}'):
+    """承認済みの proj を env で指しつつ、cwd をその外(別の枝)に置く状況を作る。"""
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (proj / ".claude-hooks.json").write_text(body, encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", proj, pinned=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    return proj, outside
+
+
+def test_notifies_when_rejected_env_anchor_drops_the_project_layer(monkeypatch, tmp_path):
+    """`cd /tmp` 相当 — 祖先制約で env が不採用になり、承認済みの設定層が丸ごと落ちる。
+
+    落ちた設定は cwd の祖先ではなく別の枝にあるので祖先探索では拾えない。それでも
+    「見つけたのに読まなかった設定は必ず通知する」を成立させる(N1)。
+    """
+    proj, outside = _project_outside_cwd(monkeypatch, tmp_path)
+    cfg = config.load_config(str(outside))
+    assert cfg["notify"]["method"] == "auto"  # 採用はしない(祖先制約は緩めない)
+    assert cfg["_notices"] == [
+        trust.rejected_env_notice(os.path.realpath(str(proj)), str(outside))
+    ]
+
+
+def test_rejected_env_notice_is_independent_per_location(monkeypatch, tmp_path):
+    """通知はクールダウンを持ち、2回目は抑止される(場所ごとに独立)。"""
+    _project_outside_cwd(monkeypatch, tmp_path)
+    outside = tmp_path / "outside"
+    assert len(config.load_config(str(outside))["_notices"]) == 1
+    assert config.load_config(str(outside))["_notices"] == []
+
+
+def test_rejected_env_notice_cooldown_zero_notifies_every_time(monkeypatch, tmp_path):
+    """`notice_cooldown_sec` は N1 通知にも渡る(既定 3600 に固定されていない)。"""
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (proj / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    approve_project(
+        monkeypatch, tmp_path / "global.json", proj,
+        global_cfg={"notice_cooldown_sec": 0}, pinned=True,
+    )
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert len(config.load_config(str(outside))["_notices"]) == 1
+    assert len(config.load_config(str(outside))["_notices"]) == 1  # 0 = 毎回
+
+
+def test_quiet_load_does_not_consume_rejected_env_cooldown(monkeypatch, tmp_path):
+    """audit_log 相当の静かな呼び出しは N1 通知の枠も消費しない。"""
+    proj, outside = _project_outside_cwd(monkeypatch, tmp_path)
+    quiet = config.load_config(str(outside), notices=False)
+    loud = config.load_config(str(outside))
+    assert quiet["_notices"] == []
+    assert loud["_notices"] == [
+        trust.rejected_env_notice(os.path.realpath(str(proj)), str(outside))
+    ]
+
+
+def test_no_rejected_env_notice_when_env_dir_has_no_config(monkeypatch, tmp_path):
+    """不採用でも、そこに設定ファイルが無ければ落ちた保護は無い = 通知しない。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)  # .claude-hooks.json は置かない
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    assert config.load_config(str(outside))["_notices"] == []
+
+
+def test_no_rejected_env_notice_when_env_is_adopted(monkeypatch, tmp_path):
+    """採用された env は「落ちた層」ではないので通知しない(二重通知を出さない)。"""
+    proj = tmp_path / "proj"
+    (proj / ".git").mkdir(parents=True)
+    (proj / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", proj, pinned=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    sub = proj / "sub"
+    sub.mkdir()
+    assert config._rejected_env_dir(str(sub)) is None
+    assert config.load_config(str(sub))["_notices"] == []
+
+
+def test_rejected_env_dir_returns_none_when_env_unset_or_empty(monkeypatch, tmp_path):
+    assert config._rejected_env_dir(str(tmp_path)) is None  # 未設定(conftest で削除済み)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+    assert config._rejected_env_dir(str(tmp_path)) is None
+
+
+def test_rejected_env_dir_returns_none_for_nonexistent_path(monkeypatch, tmp_path):
+    """存在しないパスは設定ファイルも持てないので通知対象にならない。"""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "does-not-exist"))
+    assert config._rejected_env_dir(str(tmp_path)) is None
+
+
+def test_rejected_env_dir_reports_descendant_of_cwd(monkeypatch, tmp_path):
+    """cwd の子孫を指す値も不採用 = 落ちた層として通知対象になる。"""
+    deeper = tmp_path / "deeper"
+    deeper.mkdir()
+    (deeper / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(deeper))
+    assert config._rejected_env_dir(str(tmp_path)) == str(deeper)
 
 
 # ---- 読めない祖先ディレクトリがあっても設定読み込みを壊さない ----

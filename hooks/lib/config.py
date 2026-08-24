@@ -106,6 +106,8 @@ def _env_root(cwd: str | None) -> str | None:
     あり、この制約は正当な用途を壊さない。`/add-dir` などでセッションルートの外を
     作業している場合はここで不採用になるが、その場合は「実際に作業しているディレクトリ
     の git ルート」が基準になる — 異常ではなく、むしろそちらが正しいアンカーである。
+    不採用にした値は無言では捨てない: そこに `.claude-hooks.json` があれば
+    `_rejected_env_dir` が拾い、落ちたプロジェクト層として通知する(N1)。
     例外は投げない。
     """
     value = os.environ.get(PROJECT_DIR_ENV)
@@ -123,6 +125,29 @@ def _env_root(cwd: str | None) -> str | None:
     except (OSError, ValueError):
         return None
     return None
+
+
+def _rejected_env_dir(cwd: str | None) -> str | None:
+    """検証で不採用にした CLAUDE_PROJECT_DIR のうち、通知すべき値を返す(N1)。
+
+    `_env_root` の祖先制約は「別プロジェクトの承認済み設定の持ち込み」を塞ぐが、
+    プロジェクト外へ `cd` しただけ(`cd /tmp`・`cd ~`・git リポジトリでない親へ `cd ..`)
+    でも env は不採用になり、本来のプロジェクト層が丸ごと落ちる。落ちた設定は cwd の
+    祖先ではなく別の枝にあるため、`_skipped_config_dirs` の祖先探索では拾えない。
+    ここで別枝として拾い、「見つけたのに読まなかった設定は必ず通知する」を経路に
+    よらず成立させる。**採用はしない** — 祖先制約(=持ち込み封じ)は一切緩めず、
+    可視性だけを足す。
+    そこに `.claude-hooks.json` が無ければ落ちた保護も無いので何も返さない。
+    例外は投げない(`os.path.isfile` は OSError/ValueError を飲む)。
+    """
+    value = os.environ.get(PROJECT_DIR_ENV)
+    if not value:
+        return None
+    if _env_root(cwd) is not None:
+        return None  # 採用された = 落ちていない
+    if not os.path.isfile(os.path.join(value, PROJECT_CONFIG_NAME)):
+        return None
+    return value
 
 
 def _nearest_git_root(cwd: str) -> str | None:
@@ -234,6 +259,9 @@ def _skipped_notices(cwd: str | None, root: str | None, cooldown_raw) -> list[st
     無視した設定は必ず通知する(0.7.0 の原則)ため、ここで存在だけを確認し
     (JSONとして解析はしない — 未承認の内容を解析対象にする必要は無い)、通知文と
     クールダウンの管理は trust.py に委ねる。通知は場所ごとに独立したクールダウンを持つ。
+    対象は 2 経路ある。cwd とその祖先(`_skipped_config_dirs`)と、cwd の祖先ではない
+    別の枝にあるため祖先探索では拾えない「不採用にした CLAUDE_PROJECT_DIR」
+    (`_rejected_env_dir`。N1)である。
     root は project_root(cwd) の戻り値。project_root は cwd が非 None のとき常に str を
     返す契約なので、cwd が None でない限り root も None にはならない。cwd が None のとき
     (event に cwd が無い呼び出し)は比較する対象自体が無いため何もしない。
@@ -244,6 +272,9 @@ def _skipped_notices(cwd: str | None, root: str | None, cooldown_raw) -> list[st
     out: list[str] = []
     for skipped in _skipped_config_dirs(cwd, root):
         out.extend(trust.notify_skipped(skipped, root, cooldown))
+    rejected = _rejected_env_dir(cwd)
+    if rejected is not None:
+        out.extend(trust.notify_rejected_env(rejected, root, cooldown))
     return out
 
 

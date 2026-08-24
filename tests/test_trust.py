@@ -448,3 +448,50 @@ def test_notify_skipped_wrapper_catches_internal_exception(monkeypatch, tmp_path
         "/home/alice/proj/sub", "/home/alice/proj", 3600, state_path=tmp_path / "s.json"
     )
     assert v == []
+
+
+# ---- notify_rejected_env(N1: 不採用にした CLAUDE_PROJECT_DIR の設定の通知) ----
+
+
+def test_rejected_env_notice_exact_text():
+    assert trust.rejected_env_notice("/home/alice/proj", "/home/alice/elsewhere") == (
+        "[safe-dev-hooks] /home/alice/proj の .claude-hooks.json は読みませんでした。\n"
+        "環境変数 CLAUDE_PROJECT_DIR はこの場所を指していますが、現在の作業ディレクトリの\n"
+        "祖先ではないため、プロジェクトの基準として採用していません"
+        "(現在の基準: /home/alice/elsewhere)。\n"
+        "この設定を有効にしたい場合は、そのプロジェクト配下のディレクトリで作業してください。"
+    )
+
+
+def test_rejected_env_notice_differs_from_skipped_notice():
+    """理由が違えば利用者が取るべき行動も違うので、文面を共用しない。"""
+    assert trust.rejected_env_notice("/home/alice/proj", "/home/alice/x") != trust.skipped_notice(
+        "/home/alice/proj", "/home/alice/x"
+    )
+
+
+def _notify_env(env_dir="/home/alice/proj", root="/home/alice/elsewhere", cooldown=3600, **kw):
+    return trust.notify_rejected_env(env_dir, root, cooldown, **kw)
+
+
+def test_notify_rejected_env_returns_rejected_env_notice_text(tmp_path):
+    result = _notify_env(state_path=tmp_path / "s.json", now=1.0)
+    assert result == [trust.rejected_env_notice("/home/alice/proj", "/home/alice/elsewhere")]
+
+
+def test_notify_rejected_env_cooldown_suppresses_then_expires(tmp_path):
+    sp = tmp_path / "s.json"
+    v1 = _notify_env(state_path=sp, now=1000.0, cooldown=100)
+    v2 = _notify_env(state_path=sp, now=1050.0, cooldown=100)
+    v3 = _notify_env(state_path=sp, now=1100.0, cooldown=100)
+    assert len(v1) == 1 and v2 == [] and len(v3) == 1
+    key = os.path.realpath("/home/alice/proj")
+    assert json.loads(sp.read_text(encoding="utf-8")) == {"skipped_last": {key: 1100.0}}
+
+
+def test_notify_rejected_env_wrapper_catches_internal_exception(monkeypatch, tmp_path):
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(trust, "_notify_skipped", boom)
+    assert _notify_env(state_path=tmp_path / "s.json") == []
