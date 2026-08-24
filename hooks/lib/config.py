@@ -1,12 +1,14 @@
 """3層マージ設定(ビルトイン既定 ← グローバル ← プロジェクト)。"""
 import copy
 import json
+import os
 from pathlib import Path
 
 from . import trust
 
 GLOBAL_CONFIG_PATH = Path.home() / ".claude" / "claude-hooks.json"
 PROJECT_CONFIG_NAME = ".claude-hooks.json"
+PROJECT_DIR_ENV = "CLAUDE_PROJECT_DIR"
 
 DEFAULTS: dict = {
     "bash_guard": {
@@ -67,6 +69,41 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
+def project_root(cwd: str | None = None) -> str | None:
+    """相対パスとプロジェクト設定の基準を返す。
+
+    event["cwd"] は Bash の cd に追従する一時的な作業ディレクトリなので基準にできない。
+    Claude Code がフックに渡すセッション開始時のプロジェクトルート CLAUDE_PROJECT_DIR を
+    優先し、無ければ cwd の最近傍の git ルート、それも無ければ cwd に戻す(D1)。
+    例外は投げない。cwd が None のときは git 探索を行わず None を返す。
+    """
+    env_root = os.environ.get(PROJECT_DIR_ENV)
+    if env_root:
+        return env_root
+    if cwd is None:
+        return None
+    git_root = _nearest_git_root(cwd)
+    if git_root is not None:
+        return git_root
+    return cwd
+
+
+def _nearest_git_root(cwd: str) -> str | None:
+    """cwd から見た最近傍の git ルート(祖先に `.git` を持つ最初のディレクトリ)を返す。
+
+    `.git` は worktree ではファイルなので `is_dir()` でなく `exists()` で判定する。
+    途中で `OSError` が起きても例外を外へ出さず探索を打ち切る(None を返す)。
+    """
+    try:
+        candidates = [Path(cwd), *Path(cwd).parents]
+        for d in candidates:
+            if (d / ".git").exists():
+                return str(d)
+    except OSError:
+        return None
+    return None
+
+
 def load_config(cwd: str | None = None) -> dict:
     """設定を読み込む。この関数は例外を送出しない。
 
@@ -124,11 +161,14 @@ def _load_config(cwd: str | None = None) -> dict:
     # プロジェクト層: 信頼できない入力。グローバル層の検証後に承認を判定し、
     # 非承認なら JSON として解析しない(ハッシュ計算のため生バイト列だけ読む)。
     # 承認済みなら手順で読んだバイト列そのものを解析する(再オープンしない)。
-    project_path = Path(cwd or ".") / PROJECT_CONFIG_NAME
+    # 基準は cwd そのものではなく project_root(cwd)(D1): event["cwd"] は Bash の cd に
+    # 追従する一時的な値なので、サブディレクトリに居るだけで設定が読めなくなるのを防ぐ。
+    root = project_root(cwd)
+    project_path = Path(root or ".") / PROJECT_CONFIG_NAME
     raw = _read_layer(project_path, errors)
     if raw is not None:
         verdict = trust.gate(
-            raw, cwd, cfg["trusted_projects"],
+            raw, root, cfg["trusted_projects"],
             trust.cooldown_seconds(cfg["notice_cooldown_sec"]),
         )
         notices.extend(verdict.notices)

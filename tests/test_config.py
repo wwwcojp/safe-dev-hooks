@@ -791,6 +791,111 @@ def test_validate_revert_deep_copies_nested_category_value():
     ]
 
 
+# ---- プロジェクトルートの基準差し替え(project_root) ----
+
+
+def test_project_root_prefers_claude_project_dir_env(monkeypatch, tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    assert config.project_root(str(other)) == str(root)
+
+
+def test_project_root_empty_env_is_treated_as_unset(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    assert config.project_root(str(cwd)) == str(cwd)
+
+
+def test_project_root_finds_nearest_git_ancestor(monkeypatch, tmp_path):
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    assert config.project_root(str(sub)) == str(root)
+
+
+def test_project_root_recognizes_git_file_for_worktrees(monkeypatch, tmp_path):
+    """worktree では `.git` はディレクトリではなくファイルなので is_dir() では取り逃す。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".git").write_text("gitdir: /somewhere/.git/worktrees/x", encoding="utf-8")
+    sub = root / "a"
+    sub.mkdir()
+    assert config.project_root(str(sub)) == str(root)
+
+
+def test_project_root_falls_back_to_cwd_without_git(monkeypatch, tmp_path):
+    cwd = tmp_path / "no-git-here"
+    cwd.mkdir()
+    assert config.project_root(str(cwd)) == str(cwd)
+
+
+def test_project_root_none_cwd_returns_none_without_git_search(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)  # tmp_path 自体には .git は無い
+    assert config.project_root(None) is None
+
+
+def test_project_root_swallows_oserror_from_ancestor_exists(monkeypatch, tmp_path):
+    sub = tmp_path / "a" / "b"
+    sub.mkdir(parents=True)
+    original_exists = Path.exists
+
+    def boom(self):
+        raise OSError("denied")
+
+    monkeypatch.setattr(Path, "exists", boom)
+    try:
+        assert config.project_root(str(sub)) == str(sub)
+    finally:
+        monkeypatch.setattr(Path, "exists", original_exists)
+
+
+def test_project_root_env_overrides_even_when_cwd_has_git(monkeypatch, tmp_path):
+    env_root = tmp_path / "env-root"
+    env_root.mkdir()
+    git_root = tmp_path / "git-root"
+    (git_root / ".git").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(env_root))
+    assert config.project_root(str(git_root)) == str(env_root)
+
+
+def test_load_config_write_protected_paths_reachable_from_subdirectory(monkeypatch, tmp_path):
+    """回帰: プロジェクトルートの承認済み設定は cwd をサブディレクトリにしても読まれる。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    (root / ".claude-hooks.json").write_text(
+        json.dumps({"secrets_guard": {"write_protected_paths": ["secret.txt"]}}),
+        encoding="utf-8",
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", root, pinned=True)
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    cfg = config.load_config(str(sub))
+    assert cfg["secrets_guard"]["write_protected_paths"] == ["secret.txt"]
+    assert cfg["_errors"] == []
+
+
+def test_trusted_projects_key_is_resolved_root_realpath_regardless_of_cwd(monkeypatch, tmp_path):
+    """基準がどう解決されても trusted_projects のキーは解決後ルートの realpath になる。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    (root / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", root, pinned=True)
+    sub = root / "deep" / "sub"
+    sub.mkdir(parents=True)
+    # 承認エントリのキーは root の realpath。cwd をサブディレクトリにしても
+    # 同じキーで一致し、既存の承認エントリが採用される(=設定が適用される)。
+    cfg = config.load_config(str(sub))
+    assert cfg["notify"]["method"] == "bell"
+    assert cfg["_notices"] == []  # 未承認/不一致の通知が出ない = 正しいキーで一致した証跡
+
+
 def test_apply_layer_does_not_share_untouched_sections_with_lower_layer():
     """マージ結果は下位層と入れ子オブジェクトを共有しない(_merge の別名化を断つ)。
 

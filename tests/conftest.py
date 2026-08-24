@@ -29,3 +29,9 @@ def _isolate_trust_state(monkeypatch, tmp_path):
     from hooks.lib import trust
 
     monkeypatch.setattr(trust, "STATE_PATH", tmp_path / "safe-dev-hooks-state.json")
+
+
+@pytest.fixture(autouse=True)
+def _clear_project_dir_env(monkeypatch):
+    """CLAUDE_PROJECT_DIR がテスト実行環境から漏れ込んで基準をすり替えないようにする。"""
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
