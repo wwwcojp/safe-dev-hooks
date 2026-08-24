@@ -7,9 +7,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 宣言している最低バージョン(pyproject.toml requires-python)と、現在の
+        # 既定バージョンの両方で回す。ピン無しの `uv run` だけだと uv が解決した
+        # 1バージョンしか通らず、他バージョンだけで再現する退行を検出できない。
+        python-version: ["3.10", "3.14"]
+    env:
+      # `uv run` の解決先バージョンをここで固定する。Lint/Test の run 本文自体は
+      # 変えない(tests/test_verify.py::test_quick_stage_mirrors_ci が scripts/verify.py
+      # の quick ステージと一字一句の一致を検査しているため)。
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: 実ホームパスのリークチェック
         run: |
           if git grep -nP '/(home|Users)/(?!USER\b|alice\b|user\b)[A-Za-z_][A-Za-z0-9._-]*' --; then

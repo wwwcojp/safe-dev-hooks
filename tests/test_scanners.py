@@ -12,6 +12,30 @@ def test_resolve_config_path_returns_candidate_str(tmp_path):
     assert result == str(p)
 
 
+def test_resolve_config_path_uses_project_root_from_subdirectory(tmp_path):
+    """回帰: cwd がサブディレクトリでもプロジェクトルートの .gitleaks.toml を使う。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    (root / ".gitleaks.toml").write_text("", encoding="utf-8")
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    result = scanners._resolve_config_path({}, str(sub))
+    assert result == str(root / ".gitleaks.toml")
+
+
+def test_resolve_config_path_explicit_still_wins_from_subdirectory(tmp_path):
+    """明示指定(gitleaks_config)は project_root 基準へ変えても従来どおり優先される。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    (root / ".gitleaks.toml").write_text("", encoding="utf-8")
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    explicit = tmp_path / "explicit.toml"
+    explicit.write_text("", encoding="utf-8")
+    result = scanners._resolve_config_path({"gitleaks_config": str(explicit)}, str(sub))
+    assert result == str(explicit)
+
+
 # --- _gitleaks_argv(純関数) ---
 
 def test_argv_off_returns_none():

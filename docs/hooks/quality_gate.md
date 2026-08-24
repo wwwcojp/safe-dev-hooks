@@ -24,7 +24,9 @@
 | `*.rs` | `rustfmt` | `Cargo.toml` | `rustfmt --check {file}` |
 | `*.js` / `*.jsx` / `*.ts` / `*.tsx` | `npx` | `package.json` | `npx --no-install eslint {file}` |
 
-実行ファイルが `PATH` に無い、または前提設定ファイルがプロジェクトルート直下に無い場合はそのコマンドをスキップする。いずれの条件も満たさなければ何もしない。
+実行ファイルが `PATH` に無い、または前提設定ファイルがプロジェクトルート直下に無い場合はそのコマンドをスキップする。いずれの条件も満たさなければ何もしない。「プロジェクトルート」は `hooks/lib/config.py` の `project_root(cwd)`(`CLAUDE_PROJECT_DIR` → cwdの最近傍のgitルート → cwd)で決定する([docs/configuration.md](../configuration.md) 参照)。
+
+**実行ディレクトリ(0.7.1)**: `commands` で明示設定したコマンドも自動検出コマンドも、区別なく**プロジェクトルートを実行ディレクトリ**として実行する。`{file}` は Edit/Write が常に絶対パスで渡すため置換結果はこの変更の影響を受けないが、利用者が `commands` に書いた**相対パスを含む独自コマンド**は、従来の `cwd`(作業ディレクトリ)ではなく**プロジェクトルート**基準で解決されるようになった点に注意。
 
 ### block になる条件
 

@@ -302,3 +302,196 @@ def test_gate_wrapper_catches_internal_exception(monkeypatch, tmp_path):
     assert v.notices == [
         "safe-dev-hooks: プロジェクト設定の信頼判定に失敗したため無視しました: RuntimeError: boom"
     ]
+
+
+# ---- notices=False(通知を表示しない呼び出し。audit_log 用) ----
+
+
+def test_gate_quiet_pinned_match_adopts_without_notices(tmp_path):
+    """静かな呼び出しでも採用判定は同じ(deny 層の挙動は notices に依存しない)。"""
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    assert _gate(trusted={key: DIGEST}, state_path=sp, notices=False) == trust.Verdict(True, [])
+    assert not sp.exists()  # state を一切触らない
+
+
+def test_gate_quiet_pinned_mismatch_rejects_without_notice(tmp_path):
+    key = os.path.realpath("/home/alice/proj")
+    other = trust.content_hash(b"other")
+    sp = tmp_path / "s.json"
+    v = _gate(trusted={key: other}, state_path=sp, notices=False)
+    assert v == trust.Verdict(False, [])  # 不採用は同じ。通知文だけ作らない
+    assert not sp.exists()
+
+
+def test_gate_quiet_denied_rejects_without_notices(tmp_path):
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    assert _gate(trusted={key: False}, state_path=sp, notices=False) == trust.Verdict(False, [])
+    assert not sp.exists()
+
+
+def test_gate_quiet_unpinned_adopts_without_touching_unpinned_seen(tmp_path):
+    """静かな呼び出しは unpinned_seen を進めない = 変化検知を落とさない側に倒す。"""
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    t = {key: True}
+    assert _gate(raw=b"v1", trusted=t, state_path=sp, notices=False) == trust.Verdict(True, [])
+    assert not sp.exists()  # 静かな呼び出しでは記録しない
+    # 通常の呼び出しで v1 を記録 → 静かな呼び出しで v2 を見ても記録は v1 のまま
+    assert _gate(raw=b"v1", trusted=t, state_path=sp).notices == []
+    assert _gate(raw=b"v2", trusted=t, state_path=sp, notices=False).notices == []
+    assert json.loads(sp.read_text(encoding="utf-8")) == {
+        "unpinned_seen": {key: trust.content_hash(b"v1")}
+    }
+    # 変化はその後の通常の呼び出しでちゃんと通知される
+    assert _gate(raw=b"v2", trusted=t, state_path=sp).notices == [
+        trust.unpinned_changed_notice(key, trust.content_hash(b"v2"))
+    ]
+
+
+def test_gate_quiet_untrusted_rejects_without_consuming_cooldown(tmp_path):
+    """静かな呼び出しが notice_last を書くと、後続の通常呼び出しが黙ってしまう(C1)。"""
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    quiet = _gate(state_path=sp, now=1000.0, notices=False)
+    assert quiet == trust.Verdict(False, [])
+    assert not sp.exists()
+    loud = _gate(state_path=sp, now=1000.0)
+    assert loud.notices == [trust.untrusted_notice(key, DIGEST)]
+
+
+# ---- notify_skipped(D2: 読まなかったプロジェクト設定の通知) ----
+
+
+def test_skipped_notice_exact_text():
+    assert trust.skipped_notice("/home/alice/proj/sub", "/home/alice/proj") == (
+        "[safe-dev-hooks] /home/alice/proj/sub の .claude-hooks.json は、\n"
+        "プロジェクトの基準ディレクトリ(/home/alice/proj)とは異なる場所にあるため読みませんでした。\n"
+        "プロジェクト設定は基準ディレクトリのものだけが読まれます。\n"
+        "この場所の設定を有効にしたい場合は、内容を基準ディレクトリの\n"
+        ".claude-hooks.json へ統合してください。"
+    )
+
+
+def _notify(skipped="/home/alice/proj/sub", root="/home/alice/proj", cooldown=3600, **kw):
+    return trust.notify_skipped(skipped, root, cooldown, **kw)
+
+
+def test_notify_skipped_cooldown_suppresses_then_expires(tmp_path):
+    sp = tmp_path / "s.json"
+    v1 = _notify(state_path=sp, now=1000.0, cooldown=100)
+    v2 = _notify(state_path=sp, now=1050.0, cooldown=100)  # 50 秒後: 抑制
+    v3 = _notify(state_path=sp, now=1100.0, cooldown=100)  # 100 秒後: 再通知
+    assert len(v1) == 1 and v2 == [] and len(v3) == 1
+    key = os.path.realpath("/home/alice/proj/sub")
+    assert json.loads(sp.read_text(encoding="utf-8")) == {"skipped_last": {key: 1100.0}}
+
+
+def test_notify_skipped_cooldown_zero_notifies_every_time(tmp_path):
+    sp = tmp_path / "s.json"
+    assert len(_notify(state_path=sp, now=1.0, cooldown=0)) == 1
+    assert len(_notify(state_path=sp, now=1.0, cooldown=0)) == 1
+
+
+def test_notify_skipped_notifies_when_state_broken_or_unwritable(tmp_path):
+    broken = tmp_path / "s.json"
+    broken.write_text("{broken", encoding="utf-8")
+    assert len(_notify(state_path=broken, now=1.0)) == 1
+    assert _notify(state_path=broken, now=2.0) == []  # 上書き成功後は抑制
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    unwritable = blocker / "s.json"
+    assert len(_notify(state_path=unwritable, now=1.0)) == 1
+    assert len(_notify(state_path=unwritable, now=2.0)) == 1  # 書けないので毎回通知
+
+
+def test_notify_skipped_uses_wall_clock_when_now_omitted(monkeypatch, tmp_path):
+    monkeypatch.setattr(trust.time, "time", lambda: 5000.0)
+    sp = tmp_path / "s.json"
+    _notify(state_path=sp)
+    key = os.path.realpath("/home/alice/proj/sub")
+    assert json.loads(sp.read_text(encoding="utf-8"))["skipped_last"][key] == 5000.0
+
+
+def test_notify_skipped_returns_skipped_notice_text(tmp_path):
+    sp = tmp_path / "s.json"
+    result = _notify(state_path=sp, now=1.0)
+    assert result == [trust.skipped_notice("/home/alice/proj/sub", "/home/alice/proj")]
+
+
+def test_notify_skipped_key_is_realpath_of_skipped_dir(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    sp = tmp_path / "s.json"
+    trust.notify_skipped(str(link), "/home/alice/proj", 3600, now=1.0, state_path=sp)
+    state = json.loads(sp.read_text(encoding="utf-8"))
+    assert list(state["skipped_last"].keys()) == [os.path.realpath(str(real))]
+
+
+def test_notify_skipped_invalid_cooldown_falls_back_to_default_without_raising(tmp_path):
+    sp = tmp_path / "s.json"
+    first = _notify(state_path=sp, now=1000.0, cooldown=100)
+    assert len(first) == 1  # cooldown=100 が実際に記録される
+    second = _notify(state_path=sp, now=1050.0, cooldown="bogus")
+    assert second == []  # cooldown_seconds("bogus") -> 既定 3600 のため抑制
+
+
+def test_notify_skipped_wrapper_catches_internal_exception(monkeypatch, tmp_path):
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(trust, "_notify_skipped", boom)
+    v = trust.notify_skipped(
+        "/home/alice/proj/sub", "/home/alice/proj", 3600, state_path=tmp_path / "s.json"
+    )
+    assert v == []
+
+
+# ---- notify_rejected_env(N1: 不採用にした CLAUDE_PROJECT_DIR の設定の通知) ----
+
+
+def test_rejected_env_notice_exact_text():
+    assert trust.rejected_env_notice("/home/alice/proj", "/home/alice/elsewhere") == (
+        "[safe-dev-hooks] /home/alice/proj の .claude-hooks.json は読みませんでした。\n"
+        "環境変数 CLAUDE_PROJECT_DIR はこの場所を指していますが、現在の作業ディレクトリの\n"
+        "祖先ではないため、プロジェクトの基準として採用していません"
+        "(現在の基準: /home/alice/elsewhere)。\n"
+        "この設定を有効にしたい場合は、そのプロジェクト配下のディレクトリで作業してください。"
+    )
+
+
+def test_rejected_env_notice_differs_from_skipped_notice():
+    """理由が違えば利用者が取るべき行動も違うので、文面を共用しない。"""
+    assert trust.rejected_env_notice("/home/alice/proj", "/home/alice/x") != trust.skipped_notice(
+        "/home/alice/proj", "/home/alice/x"
+    )
+
+
+def _notify_env(env_dir="/home/alice/proj", root="/home/alice/elsewhere", cooldown=3600, **kw):
+    return trust.notify_rejected_env(env_dir, root, cooldown, **kw)
+
+
+def test_notify_rejected_env_returns_rejected_env_notice_text(tmp_path):
+    result = _notify_env(state_path=tmp_path / "s.json", now=1.0)
+    assert result == [trust.rejected_env_notice("/home/alice/proj", "/home/alice/elsewhere")]
+
+
+def test_notify_rejected_env_cooldown_suppresses_then_expires(tmp_path):
+    sp = tmp_path / "s.json"
+    v1 = _notify_env(state_path=sp, now=1000.0, cooldown=100)
+    v2 = _notify_env(state_path=sp, now=1050.0, cooldown=100)
+    v3 = _notify_env(state_path=sp, now=1100.0, cooldown=100)
+    assert len(v1) == 1 and v2 == [] and len(v3) == 1
+    key = os.path.realpath("/home/alice/proj")
+    assert json.loads(sp.read_text(encoding="utf-8")) == {"skipped_last": {key: 1100.0}}
+
+
+def test_notify_rejected_env_wrapper_catches_internal_exception(monkeypatch, tmp_path):
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(trust, "_notify_skipped", boom)
+    assert _notify_env(state_path=tmp_path / "s.json") == []

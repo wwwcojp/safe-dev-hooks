@@ -82,3 +82,29 @@ def test_broken_settings_json_ignored(monkeypatch, tmp_path, capsys):
              "cwd": str(tmp_path)}
     out = _run(monkeypatch, event, capsys)
     assert "設定ファイルが変更されました" in out["systemMessage"]
+
+
+# ---- プロジェクトルートの基準差し替え(project_root) ----
+
+
+def test_disable_all_hooks_detects_from_subdirectory(monkeypatch, tmp_path):
+    """回帰: cwd がサブディレクトリでもプロジェクトルートの settings.json を検知する。"""
+    monkeypatch.setattr(config_guard, "_USER_SETTINGS", tmp_path / "none-user-settings.json")
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    settings = root / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"disableAllHooks": true}', encoding="utf-8")
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    assert config_guard._disable_all_hooks_active(str(sub)) is True
+
+
+def test_disable_all_hooks_absent_from_subdirectory_stays_false(monkeypatch, tmp_path):
+    """明示に無い/falseのままなら、サブディレクトリ起点への変更後も誤検知しない。"""
+    monkeypatch.setattr(config_guard, "_USER_SETTINGS", tmp_path / "none-user-settings.json")
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    assert config_guard._disable_all_hooks_active(str(sub)) is False

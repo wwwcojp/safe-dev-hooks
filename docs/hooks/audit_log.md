@@ -33,7 +33,9 @@
 | キー | 既定値 | 説明 |
 |---|---|---|
 | `audit_log.enabled` | `true` | falseで本Hookを無効化 |
-| `audit_log.path` | `".claude/logs"` | ログ出力先ディレクトリ。相対パスは実行時の `cwd` からの相対パスとして解決される |
+| `audit_log.path` | `".claude/logs"` | ログ出力先ディレクトリ。相対パスは**プロジェクトルート**からの相対パスとして解決される(0.7.1)。絶対パスを指定した場合は従来どおりそのまま使う |
+
+相対パスの基準となる「プロジェクトルート」は `hooks/lib/config.py` の `project_root(cwd)` が次の順で決定する: (1) 環境変数 `CLAUDE_PROJECT_DIR` があれば無条件にそれを採用、(2) 無ければ `cwd` から見た最近傍の祖先で `.git` が存在するディレクトリ(git worktreeでは `.git` はファイルだが同様に扱う)、(3) それも無ければ従来どおり `cwd`。0.7.0以前は常に `cwd`(Bashの `cd` に追従する一時的な作業ディレクトリ)基準だったため、Claudeがサブディレクトリへ移動した状態で発火したフックでは監査ログが作業ディレクトリ配下に散らばっていた(0.7.1で修正)。詳細: [docs/configuration.md](../configuration.md) §1、[docs/security-model.md](../security-model.md)。
 
 ## 既知の限界
 

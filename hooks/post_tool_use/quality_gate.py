@@ -34,23 +34,28 @@ def resolve_commands(file_path: str, cfg: dict, cwd: str) -> list:
             commands += [c.replace("{file}", quoted) for c in cmds]
     if commands:
         return commands
+    # event["cwd"] はBashのcdに追従する一時的な値なので基準にできない(D1と同じ理由)。
+    # config.project_root で解決したプロジェクトルート基準に前提設定ファイルを探す。
+    root = config.project_root(cwd) or cwd
     for patterns_str, exe, markers, cmd in AUTO_DETECT:
         if not any(fnmatch.fnmatch(name, p) for p in patterns_str.split("|")):
             continue
         if shutil.which(exe) is None:
             continue
-        if not any((Path(cwd) / m).is_file() for m in markers):
+        if not any((Path(root) / m).is_file() for m in markers):
             continue
         commands.append(cmd.replace("{file}", quoted))
     return commands
 
 
 def run_checks(commands: list, cwd: str) -> list:
+    # D4: 実行ディレクトリもプロジェクトルート基準にする(マーカー探索と同じ基準に揃える)。
+    root = config.project_root(cwd) or cwd
     failures = []
     for cmd in commands:
         try:
             r = subprocess.run(
-                shlex.split(cmd), cwd=cwd, capture_output=True, text=True,
+                shlex.split(cmd), cwd=root, capture_output=True, text=True,
                 timeout=COMMAND_TIMEOUT_SEC,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:

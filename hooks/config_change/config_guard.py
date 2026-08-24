@@ -35,7 +35,9 @@ def _change_source(event: dict) -> str:
 
 
 def _disable_all_hooks_active(cwd: str | None) -> bool:
-    base = Path(cwd or ".")
+    # event["cwd"] はBashのcdに追従する一時的な値なので基準にできない(D1と同じ理由)。
+    # config.project_root で解決したプロジェクトルート基準に .claude/settings.json を探す。
+    base = Path(config.project_root(cwd) or ".")
     candidates = [_USER_SETTINGS] + [base / p for p in _PROJECT_SETTINGS]
     for path in candidates:
         try:

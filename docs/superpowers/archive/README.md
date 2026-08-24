@@ -21,3 +21,4 @@
 - `2026-08-22-loop-engineering-phase1.md` — 検証ゲート(`scripts/verify.py quick`、loop-hooks)の導入。設計は `specs/2026-08-22-loop-engineering-phase1-design.md`。
 - `2026-08-22-loop-engineering-phase2-mutation.md` — mutation score のラチェット導入。設計は `specs/2026-08-22-loop-engineering-phase2-mutation-design.md`、実測は `specs/2026-08-22-mutation-spike-results.md`。
 - `2026-08-23-project-config-trust-optin.md` — プロジェクト設定のオプトイン信頼(0.7.0)。設計は `specs/2026-07-26-project-config-trust-optin-design.md`(第4版)。
+- `2026-08-24-project-root-anchoring.md` — 相対パスの基準をプロジェクトルートにする(0.7.1)。spec は無く、計画内の「調査の根拠」と決定 D1〜D5 が設計記録を兼ねるため、本文を参照先として残す。
