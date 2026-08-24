@@ -1171,10 +1171,17 @@ def test_env_root_rejects_descendant_of_cwd(monkeypatch, tmp_path):
 
 
 def test_env_root_accepts_cwd_itself(monkeypatch, tmp_path):
+    """env が cwd 自身を指す場合も採用する(祖先判定の等号節)。
+
+    親を git ルートにしてあるので、等号節が無いと git 探索へフォールバックして
+    親が基準になる = このアサーションが落ちる(「祖先である」だけでは通らない)。
+    """
+    (tmp_path / ".git").mkdir()
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
     assert config.project_root(str(root)) == str(root)
+    assert config._nearest_git_root(str(root)) == str(tmp_path)  # 落ちた先は別の値
 
 
 def test_env_root_accepts_ancestor_through_symlinked_cwd(monkeypatch, tmp_path):
