@@ -20,12 +20,15 @@
 
 これはメンテナー向けのローカル開発環境の設定です(`~/loop-hooks` はメンテナーのローカルにのみ導入された未公開プラグインで、外部から取得できません)。外部コントリビューターは有効化手順を無視してかまいません — `uv run python scripts/verify.py quick` は単体でも動作するので、PR前に手動で実行するだけで十分です。
 
-このリポジトリは loop-hooks(ローカルプラグイン `~/loop-hooks`)による「ターン終了時の検証ゲート」を前提に開発する。`.py`/`.json`/`pyproject.toml` を Edit/Write で変更したターンの終了時に `uv run python scripts/verify.py quick`(実ホームパスのリークチェック → `ruff check` → `pytest`。CI と同じコマンド・同じ順序)が強制され、失敗するとターンを終われない。結果は `.loop/evidence.jsonl`(gitignore)に1実行1行で記録される。
+このリポジトリは loop-hooks(ローカルプラグイン `~/loop-hooks`)による「ターン終了時の検証ゲート」を前提に開発する。`.py`/`.json`/`pyproject.toml` に未コミットの変更があるターンの終了時(`Stop`・`SubagentStop`・`TeammateIdle`)に `uv run python scripts/verify.py quick`(実ホームパスのリークチェック → `ruff check` → `pytest`。CI と同じコマンド・同じ順序)が強制され、失敗するとターンを終われない。結果は `.loop/evidence.jsonl`(gitignore)に1実行1行で記録される。
+
+変更の検出は **`watch` に一致する未コミット変更の内容ハッシュ**で行うため、Edit/Write でも Bash 経由でも等しくゲート対象になる。ゲートの状態はリポジトリ外(`$CLAUDE_PLUGIN_DATA/state/` または `~/.cache/loop-hooks/state/`)に置かれる。
 
 - 手動で回すとき: `uv run python scripts/verify.py quick`(約1秒)
 - **テストを書いた/変えたタスクの完了条件**: `uv run python scripts/verify.py mutation`(mutmut でファイル別 mutation score を計測し、`.loop/mutation-baseline.json` を下回ると fail。上回れば自動更新。baseline は Git 追跡で PR の diff に出る)。対象は `pyproject.toml` `[tool.mutmut] only_mutate`。生き残りは `uv run mutmut results` / `uv run mutmut show <id>` で読み、厳密な期待値のテストで仕留める。真の等価変異のみ `# pragma: no mutate` を行単位で付け、理由をコメントする
 - コミット前: `uv run python scripts/verify.py all`(quick → mutation)
-- 設定は `.loop-hooks.json`。ゲート設定と `.loop/state.json` は `.claude-hooks.json` の `secrets_guard.write_protected_paths` で書き込み保護する(ユーザーが設定。`.claude-hooks.json` に `secrets_guard.write_protected_paths` が無ければ未設定 — 設計書 §6 の手順で設定する)。ゲートに詰まったらコードを直す — ゲート設定を変えて通さない
+- 設定は `.loop-hooks.json`。ゲート設定と `.loop/mutation-baseline.json` は `.claude-hooks.json` の `secrets_guard.write_protected_paths` で書き込み保護する(ユーザーが設定。`.claude-hooks.json` に `secrets_guard.write_protected_paths` が無ければ未設定 — 設計書 §6 の手順で設定する)。ゲートに詰まったらコードを直す — ゲート設定を変えて通さない
+- `~/loop-hooks` を更新したら **Claude Code を再起動する**。フック定義はセッション開始時のスナップショットなので、入口ファイルが動くと稼働中のセッションはゲートが無言で走らなくなる
 - 有効化はプロジェクト単位: `.claude/settings.local.json` の `enabledPlugins` に `"loop-hooks@loop-hooks": true`(設計: `docs/superpowers/specs/2026-08-22-loop-engineering-phase1-design.md`)
 
 ### ドッグフーディング時の注意(このリポジトリ自身のHooksを有効にして開発する場合)

@@ -37,6 +37,15 @@
 3. **無限ループ防止**: `stop_hook_active` 再入時は失敗しても警告だけ出して通す(dirty は残るので次のターン終了時に再びゲート)
 4. `.loop-hooks.json` が無いリポジトリでは何もしない(オプトイン)
 
+**2026-08-24 追記(loop-hooks 側の設計変更に伴い、上記 1〜3 は現行と異なる)**: プラグインが
+`PostToolUse(Edit|Write)` による dirty 記録をやめ、**`watch` に一致する未コミット変更の内容ハッシュ**で
+発火する方式に変わった。結果として (a) 書いた経路を問わずゲートが掛かる(§8.1 の穴が閉じた)、
+(b) 状態はリポジトリ外(`$CLAUDE_PLUGIN_DATA/state/` または `~/.cache/loop-hooks/state/`)へ移り
+`<repo>/.loop/state.json` は読まれない、(c) `Stop` に加えて `SubagentStop`・`TeammateIdle` でも走る、
+(d) 失敗時の応答が `decision: block` から `hookSpecificOutput.additionalContext` に変わった。
+本節は第1段階時点の設計記録として残す。現行の運用は `CONTRIBUTING.md` と
+`.claude/rules/dogfooding.md` を参照すること。
+
 ## 4. verify ランナー `scripts/verify.py`
 
 `uv run python scripts/verify.py <stage>`。stdlib のみで書く(uv の依存解決に乗せない。`hooks/` と同じ流儀)。
@@ -145,7 +154,11 @@ marketplace `loop-hooks` は `~/.claude/settings.json` の `extraKnownMarketplac
 
 ## 8. このリポジトリ固有の注意点
 
-### 8.1 ドッグフーディング規約との干渉(最重要)
+### 8.1 ドッグフーディング規約との干渉(最重要 — 2026-08-24 に解消)
+
+> **解消済み**: loop-hooks が内容ハッシュ方式に変わり、Bash 経由の変更もゲート対象になった(§3 の追記)。
+> 以下は当時の分析としてそのまま残す。
+
 
 `.claude/rules/dogfooding.md` は `hooks/`・`rules/` の編集(自インストールの write_protected で Edit/Write が deny される)を
 **Bash 経由の python スクリプト書込で回避する**よう案内している。一方 loop-hooks の dirty 判定は
