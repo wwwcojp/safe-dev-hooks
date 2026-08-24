@@ -302,3 +302,92 @@ def test_gate_wrapper_catches_internal_exception(monkeypatch, tmp_path):
     assert v.notices == [
         "safe-dev-hooks: プロジェクト設定の信頼判定に失敗したため無視しました: RuntimeError: boom"
     ]
+
+
+# ---- notify_skipped(D2: 読まなかったプロジェクト設定の通知) ----
+
+
+def test_skipped_notice_exact_text():
+    assert trust.skipped_notice("/home/alice/proj/sub", "/home/alice/proj") == (
+        "[safe-dev-hooks] /home/alice/proj/sub の .claude-hooks.json は、\n"
+        "プロジェクトの基準ディレクトリ(/home/alice/proj)とは異なる場所にあるため読みませんでした。\n"
+        "プロジェクト設定は基準ディレクトリのものだけが読まれます。\n"
+        "この場所の設定を有効にしたい場合は、内容を基準ディレクトリの\n"
+        ".claude-hooks.json へ統合してください。"
+    )
+
+
+def _notify(skipped="/home/alice/proj/sub", root="/home/alice/proj", cooldown=3600, **kw):
+    return trust.notify_skipped(skipped, root, cooldown, **kw)
+
+
+def test_notify_skipped_cooldown_suppresses_then_expires(tmp_path):
+    sp = tmp_path / "s.json"
+    v1 = _notify(state_path=sp, now=1000.0, cooldown=100)
+    v2 = _notify(state_path=sp, now=1050.0, cooldown=100)  # 50 秒後: 抑制
+    v3 = _notify(state_path=sp, now=1100.0, cooldown=100)  # 100 秒後: 再通知
+    assert len(v1) == 1 and v2 == [] and len(v3) == 1
+    key = os.path.realpath("/home/alice/proj/sub")
+    assert json.loads(sp.read_text(encoding="utf-8")) == {"skipped_last": {key: 1100.0}}
+
+
+def test_notify_skipped_cooldown_zero_notifies_every_time(tmp_path):
+    sp = tmp_path / "s.json"
+    assert len(_notify(state_path=sp, now=1.0, cooldown=0)) == 1
+    assert len(_notify(state_path=sp, now=1.0, cooldown=0)) == 1
+
+
+def test_notify_skipped_notifies_when_state_broken_or_unwritable(tmp_path):
+    broken = tmp_path / "s.json"
+    broken.write_text("{broken", encoding="utf-8")
+    assert len(_notify(state_path=broken, now=1.0)) == 1
+    assert _notify(state_path=broken, now=2.0) == []  # 上書き成功後は抑制
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    unwritable = blocker / "s.json"
+    assert len(_notify(state_path=unwritable, now=1.0)) == 1
+    assert len(_notify(state_path=unwritable, now=2.0)) == 1  # 書けないので毎回通知
+
+
+def test_notify_skipped_uses_wall_clock_when_now_omitted(monkeypatch, tmp_path):
+    monkeypatch.setattr(trust.time, "time", lambda: 5000.0)
+    sp = tmp_path / "s.json"
+    _notify(state_path=sp)
+    key = os.path.realpath("/home/alice/proj/sub")
+    assert json.loads(sp.read_text(encoding="utf-8"))["skipped_last"][key] == 5000.0
+
+
+def test_notify_skipped_returns_skipped_notice_text(tmp_path):
+    sp = tmp_path / "s.json"
+    result = _notify(state_path=sp, now=1.0)
+    assert result == [trust.skipped_notice("/home/alice/proj/sub", "/home/alice/proj")]
+
+
+def test_notify_skipped_key_is_realpath_of_skipped_dir(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    sp = tmp_path / "s.json"
+    trust.notify_skipped(str(link), "/home/alice/proj", 3600, now=1.0, state_path=sp)
+    state = json.loads(sp.read_text(encoding="utf-8"))
+    assert list(state["skipped_last"].keys()) == [os.path.realpath(str(real))]
+
+
+def test_notify_skipped_invalid_cooldown_falls_back_to_default_without_raising(tmp_path):
+    sp = tmp_path / "s.json"
+    first = _notify(state_path=sp, now=1000.0, cooldown=100)
+    assert len(first) == 1  # cooldown=100 が実際に記録される
+    second = _notify(state_path=sp, now=1050.0, cooldown="bogus")
+    assert second == []  # cooldown_seconds("bogus") -> 既定 3600 のため抑制
+
+
+def test_notify_skipped_wrapper_catches_internal_exception(monkeypatch, tmp_path):
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(trust, "_notify_skipped", boom)
+    v = trust.notify_skipped(
+        "/home/alice/proj/sub", "/home/alice/proj", 3600, state_path=tmp_path / "s.json"
+    )
+    assert v == []

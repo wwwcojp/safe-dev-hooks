@@ -174,9 +174,31 @@ def _load_config(cwd: str | None = None) -> dict:
         notices.extend(verdict.notices)
         if verdict.adopt:
             cfg = _apply_layer(cfg, project_path, raw, errors)
+    notices.extend(_skipped_notices(cwd, root, cfg["notice_cooldown_sec"]))
     cfg["_errors"] = errors
     cfg["_notices"] = notices
     return cfg
+
+
+def _skipped_notices(cwd: str | None, root: str | None, cooldown_raw) -> list[str]:
+    """cwd に .claude-hooks.json があるのに基準(root)が別ディレクトリで読まなかった場合の通知(D2)。
+
+    0.7.1 でプロジェクト設定の探索基準を event["cwd"] から project_root(cwd) へ移した
+    ことにより、モノレポのサブパッケージ設定などが無言で読まれなくなる経路ができた。
+    無視した設定は必ず通知する(0.7.0 の原則)ため、ここで cwd 側の存在だけを確認し
+    (JSONとして解析はしない — 未承認の内容を解析対象にする必要は無い)、通知文と
+    クールダウンの管理は trust.py に委ねる。
+    root は project_root(cwd) の戻り値。project_root は cwd が非 None のとき常に str を
+    返す契約なので、cwd が None でない限り root も None にはならない。cwd が None のとき
+    (event に cwd が無い呼び出し)は比較する対象自体が無いため何もしない。
+    """
+    if cwd is None:
+        return []
+    if os.path.realpath(cwd) == os.path.realpath(root):
+        return []
+    if not (Path(cwd) / PROJECT_CONFIG_NAME).is_file():
+        return []
+    return trust.notify_skipped(cwd, root, trust.cooldown_seconds(cooldown_raw))
 
 
 def _validate(cfg: dict, fallback: dict, errors: list) -> dict:

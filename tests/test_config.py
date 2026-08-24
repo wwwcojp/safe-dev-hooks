@@ -934,3 +934,88 @@ def test_apply_layer_does_not_share_untouched_sections_with_lower_layer():
     assert out["exfil_guard"] is not lower["exfil_guard"]  # が、同じオブジェクトではない
     out["exfil_guard"]["mode"] = "detect"
     assert lower["exfil_guard"]["mode"] == "always"
+
+
+# ---- D2: 読まなかったプロジェクト設定の通知(_skipped_notices) ----
+
+
+def test_load_config_notifies_when_cwd_has_config_but_root_differs(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
+    )
+    cfg = config.load_config(str(cwd))
+    assert cfg["_notices"] == [trust.skipped_notice(os.path.realpath(str(cwd)), str(root))]
+    assert cfg["notify"]["method"] == "auto"  # cwd 側は読まれていない(既定値のまま)
+
+
+def test_load_config_skipped_notice_respects_cooldown(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    first = config.load_config(str(cwd))
+    second = config.load_config(str(cwd))
+    assert len(first["_notices"]) == 1
+    assert second["_notices"] == []  # クールダウン内は抑止
+
+
+def test_load_config_skipped_notice_cooldown_zero_notifies_every_time(monkeypatch, tmp_path):
+    global_path = tmp_path / "global.json"
+    global_path.write_text(json.dumps({"notice_cooldown_sec": 0}), encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    assert len(config.load_config(str(cwd))["_notices"]) == 1
+    assert len(config.load_config(str(cwd))["_notices"]) == 1  # 0 = 毎回
+
+
+def test_load_config_skipped_notice_notifies_every_time_when_state_unusable(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    state_dir = tmp_path / "state-dir"
+    state_dir.mkdir()  # ディレクトリ = 状態ファイルとして使えない(読み書き失敗)
+    monkeypatch.setattr(trust, "STATE_PATH", state_dir)
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    assert len(config.load_config(str(cwd))["_notices"]) == 1
+    assert len(config.load_config(str(cwd))["_notices"]) == 1  # 毎回
+
+
+def test_load_config_no_skipped_notice_when_cwd_equals_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cfg = config.load_config(str(root))
+    assert cfg["_notices"] == []
+
+
+def test_load_config_no_skipped_notice_when_cwd_has_no_config_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()  # .claude-hooks.json を置かない
+    cfg = config.load_config(str(cwd))
+    assert cfg["_notices"] == []
+
+
+def test_load_config_no_skipped_notice_when_cwd_is_none():
+    assert config._skipped_notices(None, "/home/alice/root", 3600) == []

@@ -203,3 +203,62 @@ def _gate(
     if kind == "unpinned":
         return Verdict(True, _unpinned(key, digest, state_path))
     return Verdict(False, _untrusted(key, digest, cooldown_sec, now, state_path))
+
+
+def skipped_notice(key: str, root: str) -> str:
+    """基準ディレクトリと異なる場所にあり読まなかった .claude-hooks.json を知らせる通知文を返す。
+
+    D2: 0.7.0 の「無視した設定は必ず通知する」原則を、この経路にも適用する。
+    """
+    return (
+        f"[safe-dev-hooks] {key} の .claude-hooks.json は、\n"
+        f"プロジェクトの基準ディレクトリ({root})とは異なる場所にあるため読みませんでした。\n"
+        "プロジェクト設定は基準ディレクトリのものだけが読まれます。\n"
+        "この場所の設定を有効にしたい場合は、内容を基準ディレクトリの\n"
+        ".claude-hooks.json へ統合してください。"
+    )
+
+
+def notify_skipped(
+    skipped_dir: str,
+    root: str,
+    cooldown_sec: int,
+    *,
+    now: float | None = None,
+    state_path: Path | None = None,
+) -> list[str]:
+    """基準ディレクトリと異なる場所にあり読まなかった .claude-hooks.json を通知する。
+
+    D2: クールダウン付き。実体は `_notify_skipped`。
+    gate() と同じ理由で、ここでの try/except が最後の砦 —
+    呼び出し元(config.py)を落とさないよう、この境界で捕捉して「通知なし」に倒す。
+    D2 は可視性の追加機能であり deny 判定そのものではないため、失敗時は
+    (gate() と違って)失敗自体を知らせる通知は出さず、静かに「通知なし」に倒す。
+    """
+    try:
+        return _notify_skipped(skipped_dir, root, cooldown_sec, now=now, state_path=state_path)
+    except Exception:
+        return []
+
+
+def _notify_skipped(
+    skipped_dir: str,
+    root: str,
+    cooldown_sec: int,
+    *,
+    now: float | None = None,
+    state_path: Path | None = None,
+) -> list[str]:
+    # 状態ファイルが使えなければ通知する側に倒す(可視性優先。_untrusted と同じ設計)
+    cooldown_sec = cooldown_seconds(cooldown_sec)
+    key = project_key(skipped_dir)
+    now = time.time() if now is None else now
+    state = load_state(state_path)
+    if state is None:
+        state = {}
+    last = _section(state, "skipped_last").get(key)
+    if isinstance(last, (int, float)) and not isinstance(last, bool) and now - last < cooldown_sec:
+        return []
+    state["skipped_last"][key] = now
+    save_state(state, state_path)
+    return [skipped_notice(key, root)]

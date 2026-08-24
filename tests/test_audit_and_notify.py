@@ -79,6 +79,24 @@ def test_audit_log_does_not_emit_trust_notices(monkeypatch, capsys, tmp_path):
     assert "未承認" not in out
 
 
+def test_audit_log_does_not_emit_skipped_project_notice(monkeypatch, capsys, tmp_path):
+    """D2 の「読まなかったプロジェクト設定」通知も quiet_notices=True で出ない。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / ".claude-hooks.json").write_text('{"notify": {"method": "bell"}}', encoding="utf-8")
+    event = {"hook_event_name": "Stop", "cwd": str(cwd), "session_id": "s"}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    with pytest.raises(SystemExit) as e:
+        audit.main()
+    assert e.value.code == 0
+    out = capsys.readouterr().out
+    assert "基準ディレクトリ" not in out
+
+
 def test_notify_default_auto_falls_back_to_bell(monkeypatch, tmp_path, capsys):
     """既定(auto)でデスクトップ通知が全滅した場合はベルへフォールバックする。"""
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
