@@ -863,6 +863,28 @@ def test_project_root_env_overrides_even_when_cwd_has_git(monkeypatch, tmp_path)
     assert config.project_root(str(git_root)) == str(env_root)
 
 
+def test_load_config_uses_claude_project_dir_env_with_differing_cwd(monkeypatch, tmp_path):
+    """CLAUDE_PROJECT_DIR が設定されていれば、cwd が別ディレクトリでもそこの
+    .claude-hooks.json が読まれる(承認済みの状態で)。load_config レベルの end-to-end
+    検証: env 側のプロジェクトを pinned 承認し、cwd 側には .claude-hooks.json を置かない。
+    env 経路が無視され cwd 基準に戻ってしまうと、cwd 側に設定が無いため既定値の
+    "auto" のままになり、この assert で落ちる。
+    """
+    env_root = tmp_path / "env-root"
+    env_root.mkdir()
+    (env_root / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", env_root, pinned=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(env_root))
+    cwd = tmp_path / "other-cwd"
+    cwd.mkdir()  # env_root とは別ディレクトリで、独自の .claude-hooks.json は置かない
+    cfg = config.load_config(str(cwd))
+    assert cfg["notify"]["method"] == "bell"
+    assert cfg["_errors"] == []
+    assert cfg["_notices"] == []  # 未承認/不一致通知が無い = env 経路で正しく承認一致した証跡
+
+
 def test_load_config_write_protected_paths_reachable_from_subdirectory(monkeypatch, tmp_path):
     """回帰: プロジェクトルートの承認済み設定は cwd をサブディレクトリにしても読まれる。"""
     root = tmp_path / "root"
