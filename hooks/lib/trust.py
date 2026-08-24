@@ -160,6 +160,7 @@ def gate(
     *,
     now: float | None = None,
     state_path: Path | None = None,
+    notices: bool = True,
 ) -> Verdict:
     """プロジェクト設定(生バイト列)を採用するか判定し、出すべき通知を返す。例外を出さない。
 
@@ -167,9 +168,17 @@ def gate(
     解決で例外が起きても、Hook プロセスごと落として deny 層を素通りさせないよう、この
     境界で捕捉して安全側(不採用)に倒す。呼び出し元(config.py)の外側の保護に頼らず、
     gate() 自身が「例外を出さない」という契約を守る。
+
+    `notices=False` は通知を表示しない呼び出し(`audit_log`)用。通知文を作らないだけで
+    なく、クールダウン(`notice_last`)と変化検知(`unpinned_seen`)の**状態を一切進めない**。
+    表示しない呼び出しが枠を消費すると、後続の対話フックの通知が抑止されてしまうため。
+    採用/不採用の判定は `notices` に依存しない(deny 層の挙動はこのフラグで変わらない)。
     """
     try:
-        return _gate(raw, cwd, trusted_projects, cooldown_sec, now=now, state_path=state_path)
+        return _gate(
+            raw, cwd, trusted_projects, cooldown_sec,
+            now=now, state_path=state_path, notices=notices,
+        )
     except Exception as e:
         return Verdict(
             False,
@@ -188,6 +197,7 @@ def _gate(
     *,
     now: float | None = None,
     state_path: Path | None = None,
+    notices: bool,
 ) -> Verdict:
     cooldown_sec = cooldown_seconds(cooldown_sec)
     key = project_key(cwd)
@@ -195,11 +205,18 @@ def _gate(
     entries = trusted_projects if isinstance(trusted_projects, dict) else {}
     kind, expected = classify_entry(entries.get(key))
     if kind == "pinned":
-        if expected == digest:
+        adopt = expected == digest
+        # 通知を出さない呼び出しでも採用判定は同じ。通知文だけを作らない。
+        if not notices:
+            return Verdict(adopt)
+        if adopt:
             return Verdict(True)
         return Verdict(False, [mismatch_notice(key, digest)])
     if kind == "denied":
         return Verdict(False)
+    if not notices:
+        # 静かな呼び出しでは _unpinned / _untrusted を通らない = state を書かない。
+        return Verdict(kind == "unpinned")
     if kind == "unpinned":
         return Verdict(True, _unpinned(key, digest, state_path))
     return Verdict(False, _untrusted(key, digest, cooldown_sec, now, state_path))

@@ -515,7 +515,7 @@ def test_top_level_type_confusion_message_names_key_and_value(monkeypatch, tmp_p
 
 def test_unexpected_error_fallback_returns_nested_copies_not_defaults(monkeypatch, tmp_path):
     """想定外例外の縮退経路(load_config の except)でもネスト辞書が DEFAULTS と別名化しない。"""
-    def boom(cwd=None):
+    def boom(cwd=None, *, notices=True):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(config, "_load_config", boom)
@@ -1019,3 +1019,101 @@ def test_load_config_no_skipped_notice_when_cwd_has_no_config_file(monkeypatch, 
 
 def test_load_config_no_skipped_notice_when_cwd_is_none():
     assert config._skipped_notices(None, "/home/alice/root", 3600) == []
+
+
+# ---- C1: 通知を表示しない呼び出し(notices=False)は通知の状態を進めない ----
+
+
+def test_quiet_load_does_not_consume_skipped_notice_cooldown(monkeypatch, tmp_path):
+    """audit_log 相当の静かな呼び出しの後でも、guard 相当の呼び出しは D2 通知を出す。
+
+    0.7.1 以前は audit_log(SessionStart と全 PreToolUse/PostToolUse で走る)が
+    load_config を呼ぶだけで skipped_last のクールダウン枠を消費し、以後 1 時間
+    どの対話フックも通知を出せなくなっていた(C1)。
+    """
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    cwd = root / "sub"
+    cwd.mkdir()
+    (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    quiet = config.load_config(str(cwd), notices=False)      # audit_log 相当
+    loud = config.load_config(str(cwd))                      # bash_guard 相当
+    assert quiet["_notices"] == []
+    assert loud["_notices"] == [
+        trust.skipped_notice(os.path.realpath(str(cwd)), str(root))
+    ]
+
+
+def test_quiet_load_does_not_consume_untrusted_notice_cooldown(monkeypatch, tmp_path):
+    """0.7.0 の「未承認のため無視しました」通知も同じ経路で消費されない。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".claude-hooks.json").write_text(
+        json.dumps({"notify": {"method": "bell"}}), encoding="utf-8"
+    )
+    quiet = config.load_config(str(root), notices=False)
+    loud = config.load_config(str(root))
+    assert quiet["_notices"] == []
+    assert len(loud["_notices"]) == 1
+    assert "未承認" in loud["_notices"][0]
+
+
+def test_quiet_load_does_not_update_unpinned_seen(monkeypatch, tmp_path):
+    """静かな呼び出しは変化検知の記録も進めない(変化を見逃さない側に倒す)。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    project = root / ".claude-hooks.json"
+    project.write_text(json.dumps({"notify": {"method": "bell"}}), encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", root)  # ピン留めなし承認
+    assert config.load_config(str(root))["_notices"] == []        # v1 を記録
+    project.write_text(json.dumps({"notify": {"method": "auto"}}), encoding="utf-8")
+    quiet = config.load_config(str(root), notices=False)
+    assert quiet["_notices"] == []
+    assert quiet["notify"]["method"] == "auto"                    # 採用判定は同じ
+    loud = config.load_config(str(root))
+    assert len(loud["_notices"]) == 1 and "変更されています" in loud["_notices"][0]
+
+
+def test_quiet_load_keeps_adopt_decision_unchanged(monkeypatch, tmp_path):
+    """採用/不採用は notices に依存しない(deny 層はこのフラグで変わらない)。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".claude-hooks.json").write_text(
+        json.dumps({"secrets_guard": {"write_protected_paths": ["x.txt"]}}), encoding="utf-8"
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", root, pinned=True)
+    for notices in (True, False):
+        cfg = config.load_config(str(root), notices=notices)
+        assert cfg["secrets_guard"]["write_protected_paths"] == ["x.txt"], notices
+
+
+def test_quiet_load_still_rejects_unapproved_project_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".claude-hooks.json").write_text(
+        json.dumps({"secrets_guard": {"allow_paths": ["*"]}}), encoding="utf-8"
+    )
+    cfg = config.load_config(str(root), notices=False)
+    assert cfg["secrets_guard"]["allow_paths"] == []  # 未承認は静かな呼び出しでも不採用
+
+
+def test_quiet_load_still_reports_config_errors(monkeypatch, tmp_path):
+    """_errors は通知(_notices)ではないので notices=False でも記録される。"""
+    global_path = tmp_path / "global.json"
+    global_path.write_text("{broken", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    cfg = config.load_config(str(tmp_path), notices=False)
+    assert len(cfg["_errors"]) == 1
+
+
+def test_quiet_load_never_raises_on_bad_input(monkeypatch, tmp_path):
+    def boom(cwd=None, *, notices=True):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(config, "_load_config", boom)
+    cfg = config.load_config(str(tmp_path), notices=False)
+    assert cfg["_notices"] == []
+    assert cfg["_errors"] == ["設定の読み込みに失敗したため既定値を使用します: boom"]

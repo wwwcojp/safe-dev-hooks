@@ -97,6 +97,40 @@ def test_audit_log_does_not_emit_skipped_project_notice(monkeypatch, capsys, tmp
     assert "基準ディレクトリ" not in out
 
 
+def test_audit_log_does_not_consume_notice_cooldown_of_other_hooks(
+    monkeypatch, tmp_path, capsys
+):
+    """C1 回帰: audit_log が走った後でも、対話フックは D2 通知を出せる。
+
+    audit_log は SessionStart と全 PreToolUse/PostToolUse で走る最頻フックなので、
+    ここでクールダウン枠を消費すると以後 1 時間どのガードも通知できなくなる。
+    """
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    cwd = root / "sub"
+    cwd.mkdir()
+    (cwd / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    event = {"hook_event_name": "SessionStart", "cwd": str(cwd), "session_id": "s"}
+    assert _run(audit, monkeypatch, event, capsys) is None  # audit_log は何も出さない
+    guard_cfg = config.load_config(str(cwd))                # bash_guard 相当の呼び出し
+    assert len(guard_cfg["_notices"]) == 1
+    assert "基準ディレクトリ" in guard_cfg["_notices"][0]
+
+
+def test_audit_log_does_not_consume_untrusted_notice_cooldown(monkeypatch, tmp_path, capsys):
+    """0.7.0 の未承認通知でも同じ(audit_log が枠を食わない)。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".claude-hooks.json").write_text('{"notify": {"method": "bell"}}', encoding="utf-8")
+    event = {"hook_event_name": "SessionStart", "cwd": str(root), "session_id": "s"}
+    _run(audit, monkeypatch, event, capsys)
+    guard_cfg = config.load_config(str(root))
+    assert len(guard_cfg["_notices"]) == 1
+    assert "未承認" in guard_cfg["_notices"][0]
+
+
 def test_audit_log_anchors_to_project_root_via_env(monkeypatch, tmp_path, capsys):
     """CLAUDE_PROJECT_DIR が設定されているとき、logs は
     CLAUDE_PROJECT_DIR/.claude/logs/ に出る。"""

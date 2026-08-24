@@ -104,15 +104,22 @@ def _nearest_git_root(cwd: str) -> str | None:
     return None
 
 
-def load_config(cwd: str | None = None) -> dict:
+def load_config(cwd: str | None = None, *, notices: bool = True) -> dict:
     """設定を読み込む。この関数は例外を送出しない。
 
     設定ファイルはリポジトリ由来の信頼できない入力であり、ここで例外が漏れると
     Hookが判定前に異常終了して deny 層ごと素通りする。どんな異常でもビルトイン
     既定値へフォールバックし、`_errors` に記録して可視化する(fail-safe)。
+
+    `notices=False` は通知を表示しない呼び出し(`audit_log`)用。通知の生成そのものを
+    行わないため、クールダウン(`notice_last`/`skipped_last`)と変化検知(`unpinned_seen`)
+    の状態も進めない。`audit_log` は SessionStart と全 PreToolUse/PostToolUse で走る
+    最頻フックであり、表示しないのに枠だけ消費すると以後 1 時間、対話フック側の通知が
+    まるごと抑止されてしまう(0.7.1 以前の実挙動)。**採用/不採用の判定はこのフラグに
+    依存しない** — deny 層の挙動が通知の有無で変わってはならない。
     """
     try:
-        return _load_config(cwd)
+        return _load_config(cwd, notices=notices)
     except Exception as exc:  # 想定外の異常でもガードを死なせない
         cfg = copy.deepcopy(DEFAULTS)
         cfg["_errors"] = [f"設定の読み込みに失敗したため既定値を使用します: {exc}"]
@@ -150,10 +157,10 @@ def _apply_layer(cfg: dict, path: Path, raw: bytes, errors: list) -> dict:
     return _validate(copy.deepcopy(_merge(cfg, data)), cfg, errors)
 
 
-def _load_config(cwd: str | None = None) -> dict:
+def _load_config(cwd: str | None = None, *, notices: bool) -> dict:
     cfg = copy.deepcopy(DEFAULTS)
     errors: list[str] = []
-    notices: list[str] = []
+    collected: list[str] = []
     # グローバル層: ユーザー自身の設定。読めれば無条件にマージする。
     raw = _read_layer(GLOBAL_CONFIG_PATH, errors)
     if raw is not None:
@@ -170,13 +177,15 @@ def _load_config(cwd: str | None = None) -> dict:
         verdict = trust.gate(
             raw, root, cfg["trusted_projects"],
             trust.cooldown_seconds(cfg["notice_cooldown_sec"]),
+            notices=notices,
         )
-        notices.extend(verdict.notices)
+        collected.extend(verdict.notices)
         if verdict.adopt:
             cfg = _apply_layer(cfg, project_path, raw, errors)
-    notices.extend(_skipped_notices(cwd, root, cfg["notice_cooldown_sec"]))
+    if notices:
+        collected.extend(_skipped_notices(cwd, root, cfg["notice_cooldown_sec"]))
     cfg["_errors"] = errors
-    cfg["_notices"] = notices
+    cfg["_notices"] = collected
     return cfg
 
 

@@ -16,7 +16,11 @@ SUMMARY_MAX_CHARS = 500
 
 def main() -> None:
     event = hook_io.read_event()
-    cfg_all = config.load_config(event.get("cwd"))
+    # notices=False: このフックは通知を表示しない(finalize の quiet_notices=True)。
+    # 通知を生成させると、表示しないままクールダウン枠だけを消費してしまう。
+    # audit_log は SessionStart と全 PreToolUse/PostToolUse で走る最頻フックなので、
+    # そうなると以後 1 時間、対話フック側の通知がまるごと抑止される。
+    cfg_all = config.load_config(event.get("cwd"), notices=False)
     cfg = cfg_all.get("audit_log", {})
     if not cfg.get("enabled", True):
         hook_io.finalize(None, cfg_all, quiet_notices=True)

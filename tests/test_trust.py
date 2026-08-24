@@ -304,6 +304,63 @@ def test_gate_wrapper_catches_internal_exception(monkeypatch, tmp_path):
     ]
 
 
+# ---- notices=False(通知を表示しない呼び出し。audit_log 用) ----
+
+
+def test_gate_quiet_pinned_match_adopts_without_notices(tmp_path):
+    """静かな呼び出しでも採用判定は同じ(deny 層の挙動は notices に依存しない)。"""
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    assert _gate(trusted={key: DIGEST}, state_path=sp, notices=False) == trust.Verdict(True, [])
+    assert not sp.exists()  # state を一切触らない
+
+
+def test_gate_quiet_pinned_mismatch_rejects_without_notice(tmp_path):
+    key = os.path.realpath("/home/alice/proj")
+    other = trust.content_hash(b"other")
+    sp = tmp_path / "s.json"
+    v = _gate(trusted={key: other}, state_path=sp, notices=False)
+    assert v == trust.Verdict(False, [])  # 不採用は同じ。通知文だけ作らない
+    assert not sp.exists()
+
+
+def test_gate_quiet_denied_rejects_without_notices(tmp_path):
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    assert _gate(trusted={key: False}, state_path=sp, notices=False) == trust.Verdict(False, [])
+    assert not sp.exists()
+
+
+def test_gate_quiet_unpinned_adopts_without_touching_unpinned_seen(tmp_path):
+    """静かな呼び出しは unpinned_seen を進めない = 変化検知を落とさない側に倒す。"""
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    t = {key: True}
+    assert _gate(raw=b"v1", trusted=t, state_path=sp, notices=False) == trust.Verdict(True, [])
+    assert not sp.exists()  # 静かな呼び出しでは記録しない
+    # 通常の呼び出しで v1 を記録 → 静かな呼び出しで v2 を見ても記録は v1 のまま
+    assert _gate(raw=b"v1", trusted=t, state_path=sp).notices == []
+    assert _gate(raw=b"v2", trusted=t, state_path=sp, notices=False).notices == []
+    assert json.loads(sp.read_text(encoding="utf-8")) == {
+        "unpinned_seen": {key: trust.content_hash(b"v1")}
+    }
+    # 変化はその後の通常の呼び出しでちゃんと通知される
+    assert _gate(raw=b"v2", trusted=t, state_path=sp).notices == [
+        trust.unpinned_changed_notice(key, trust.content_hash(b"v2"))
+    ]
+
+
+def test_gate_quiet_untrusted_rejects_without_consuming_cooldown(tmp_path):
+    """静かな呼び出しが notice_last を書くと、後続の通常呼び出しが黙ってしまう(C1)。"""
+    key = os.path.realpath("/home/alice/proj")
+    sp = tmp_path / "s.json"
+    quiet = _gate(state_path=sp, now=1000.0, notices=False)
+    assert quiet == trust.Verdict(False, [])
+    assert not sp.exists()
+    loud = _gate(state_path=sp, now=1000.0)
+    assert loud.notices == [trust.untrusted_notice(key, DIGEST)]
+
+
 # ---- notify_skipped(D2: 読まなかったプロジェクト設定の通知) ----
 
 
