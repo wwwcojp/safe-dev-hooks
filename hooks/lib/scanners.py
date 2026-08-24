@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import patterns
+from . import config, patterns
 
 GITLEAKS_TIMEOUT_SEC = 15
 DEFAULT_IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1"
@@ -23,8 +23,11 @@ def _resolve_config_path(sc: dict, cwd: str | None) -> str | None:
     explicit = sc.get("gitleaks_config")
     if explicit:
         return explicit
-    if cwd:
-        candidate = Path(cwd) / ".gitleaks.toml"
+    # event["cwd"] はBashのcdに追従する一時的な値なので基準にできない(D1と同じ理由)。
+    # config.project_root で解決したプロジェクトルート基準に.gitleaks.tomlを探す。
+    root = config.project_root(cwd)
+    if root:
+        candidate = Path(root) / ".gitleaks.toml"
         if candidate.is_file():
             return str(candidate)
     return None
