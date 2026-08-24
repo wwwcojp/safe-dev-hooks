@@ -77,6 +77,15 @@ def project_root(cwd: str | None = None) -> str | None:
     優先し(ただし `_env_root` の検証を通ったものだけ)、無ければ cwd の最近傍の git
     ルート、それも無ければ cwd に戻す(D1)。
     例外は投げない。cwd が None のときは git 探索を行わず None を返す。
+
+    `cwd` 自体の絶対性はここでは検証しない。`CLAUDE_PROJECT_DIR` と違い `cwd` は
+    リポジトリ側の設定(`.claude/settings.json` の `env` 等)からは差し替えられず、
+    ハーネスが実際のプロセス作業ディレクトリから注入する値(常に絶対パス)という
+    契約なので、`_env_root` と同じ検証を課す動機がない。仮に呼び出し元が相対な
+    `cwd` を渡した場合、`_nearest_git_root(cwd)` / 末尾の `return cwd` は相対の
+    まま返す(こちらは絶対性を強制しない)。`os.path.abspath(cwd)` で正規化しても
+    結局フックプロセスの cwd を基準に解決するだけで、`_env_root` の脆弱性と
+    同じ問題を「対策した体で」持ち込むだけなので、意図的に行わない。
     """
     env_root = _env_root(cwd)
     if env_root is not None:
