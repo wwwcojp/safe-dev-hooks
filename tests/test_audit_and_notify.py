@@ -97,6 +97,104 @@ def test_audit_log_does_not_emit_skipped_project_notice(monkeypatch, capsys, tmp
     assert "基準ディレクトリ" not in out
 
 
+def test_audit_log_anchors_to_project_root_via_env(monkeypatch, tmp_path, capsys):
+    """CLAUDE_PROJECT_DIR が設定されているとき、logs は
+    CLAUDE_PROJECT_DIR/.claude/logs/ に出る。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    project_root = tmp_path / "project_root"
+    project_root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project_root))
+    cwd_sub = project_root / "subdir" / "another"
+    cwd_sub.mkdir(parents=True)
+    event = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Bash",
+        "cwd": str(cwd_sub),
+        "tool_input": {"command": "ls"},
+    }
+    _run(audit, monkeypatch, event, capsys)
+    # Logs should be in project_root/.claude/logs/, not cwd_sub/.claude/logs/
+    files = list((project_root / ".claude" / "logs").glob("audit-*.jsonl"))
+    assert len(files) == 1
+    assert not (cwd_sub / ".claude" / "logs").exists()
+    record = json.loads(files[0].read_text(encoding="utf-8").strip())
+    assert record["tool_name"] == "Bash"
+
+
+def test_audit_log_anchors_to_git_root(monkeypatch, tmp_path, capsys):
+    """CLAUDE_PROJECT_DIR 未設定でも、祖先に .git があればそこが基準になる。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    git_root = tmp_path / "git_project"
+    git_root.mkdir()
+    (git_root / ".git").mkdir()
+    cwd_sub = git_root / "subdir" / "deep"
+    cwd_sub.mkdir(parents=True)
+    event = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Bash",
+        "cwd": str(cwd_sub),
+        "tool_input": {"command": "ls"},
+    }
+    _run(audit, monkeypatch, event, capsys)
+    # Logs should be in git_root/.claude/logs/, not cwd_sub/.claude/logs/
+    files = list((git_root / ".claude" / "logs").glob("audit-*.jsonl"))
+    assert len(files) == 1
+    assert not (cwd_sub / ".claude" / "logs").exists()
+    record = json.loads(files[0].read_text(encoding="utf-8").strip())
+    assert record["tool_name"] == "Bash"
+
+
+def test_audit_log_uses_cwd_when_no_project_root(monkeypatch, tmp_path, capsys):
+    """CLAUDE_PROJECT_DIR なく .git も無ければ cwd を基準にする(既存挙動の保持)。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    cwd = tmp_path / "isolated"
+    cwd.mkdir()
+    event = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Bash",
+        "cwd": str(cwd),
+        "tool_input": {"command": "ls"},
+    }
+    _run(audit, monkeypatch, event, capsys)
+    files = list((cwd / ".claude" / "logs").glob("audit-*.jsonl"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text(encoding="utf-8").strip())
+    assert record["tool_name"] == "Bash"
+
+
+def test_audit_log_preserves_absolute_path(monkeypatch, tmp_path, capsys):
+    """audit_log.path に絶対パスを指定した場合は従来どおりそのまま使う。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    abs_log_dir = tmp_path / "custom_logs"
+    abs_log_dir.mkdir()
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project_root))
+    cwd = project_root / "sub"
+    cwd.mkdir()
+    (project_root / ".claude-hooks.json").write_text(
+        json.dumps({"audit_log": {"path": str(abs_log_dir)}}), encoding="utf-8"
+    )
+    approve_project(monkeypatch, project_root / "global.json", project_root)
+    event = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Bash",
+        "cwd": str(cwd),
+        "tool_input": {"command": "ls"},
+    }
+    _run(audit, monkeypatch, event, capsys)
+    # Logs should be in abs_log_dir, not project_root/.claude/logs/
+    files = list(abs_log_dir.glob("audit-*.jsonl"))
+    assert len(files) == 1
+    assert not (project_root / ".claude" / "logs").exists()
+    record = json.loads(files[0].read_text(encoding="utf-8").strip())
+    assert record["tool_name"] == "Bash"
+
+
 def test_notify_default_auto_falls_back_to_bell(monkeypatch, tmp_path, capsys):
     """既定(auto)でデスクトップ通知が全滅した場合はベルへフォールバックする。"""
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")

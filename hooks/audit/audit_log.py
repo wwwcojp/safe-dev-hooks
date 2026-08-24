@@ -23,7 +23,7 @@ def main() -> None:
     try:
         log_dir = Path(cfg.get("path", ".claude/logs"))
         if not log_dir.is_absolute():
-            log_dir = Path(event.get("cwd") or ".") / log_dir
+            log_dir = Path(config.project_root(event.get("cwd")) or ".") / log_dir
         log_dir.mkdir(parents=True, exist_ok=True)
         now = datetime.datetime.now(datetime.timezone.utc)
         record = {
