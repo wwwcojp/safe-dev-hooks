@@ -12,9 +12,29 @@
 
 設定ファイルが1つも無くても、全ガードはビルトイン既定値で動作する(「設定は有効化ではなく調整のため」という設計原則)。
 
+### プロジェクト直下とは「プロジェクトルート」のこと(0.7.1)
+
+表の「プロジェクト直下」は、Hookが発火した際のイベントの `cwd`(Claude が Bash の `cd` で移動しうる一時的な作業ディレクトリ)ではなく、次の順序で決定する**プロジェクトルート**(`hooks/lib/config.py` の `project_root(cwd)`)を指す。
+
+```
+CLAUDE_PROJECT_DIR(環境変数。あれば無条件に採用)
+  → cwd から見た最近傍の祖先で `.git` が存在するディレクトリ(git worktreeでは `.git` はファイルだが同様に扱う)
+    → cwd(従来どおりのフォールバック)
+```
+
+`.claude-hooks.json` は**このプロジェクトルート直下のものだけ**が探索・マージ対象になる。作業ディレクトリ(`cwd`)がサブディレクトリであっても、ルート直下の `.claude-hooks.json` が読まれる点は変わらない——**作業ディレクトリによってプロジェクト層の適用が変わることはない**。
+
+一方、サブディレクトリに `.claude-hooks.json` が置かれている場合(モノレポのサブパッケージ設定など)は、プロジェクトルートと異なる場所にあるため**読まれない**。従来はそこへ `cd` していれば拾われてしまっていたが、0.7.1 からは無言で無視せず、`cwd` 側にファイルが存在することを検出したら `systemMessage` で通知する(既定 1 時間のクールダウン、`notice_cooldown_sec` で調整。文面・状態管理は §1 信頼層の未承認通知と同じ `hooks/lib/trust.py` に集約)。この場所の設定を有効にしたい場合は、内容をプロジェクトルートの `.claude-hooks.json` へ統合する必要がある。
+
+`.gitleaks.toml` の自動探索(`scanners.gitleaks_config` 未指定時)、`config_guard` が `disableAllHooks` を検知する `.claude/settings.json`、`quality_gate` の自動検出(マーカーファイルと実行ディレクトリ)、`audit_log.path` の相対パスも同じ `project_root(cwd)` を基準にする(該当各Hookのリファレンス参照)。**例外**: `secrets_guard` の書込保護対象パスの正規化(「利用者がどこに書こうとしているか」の判定)は、この基準とは別問題として引き続き `cwd` 基準のままである([docs/security-model.md](security-model.md) 項目11)。
+
+git リポジトリでない場所で `CLAUDE_PROJECT_DIR` も未設定の場合は、フォールバックとして従来どおり `cwd` 基準になる(既知の限界)。
+
+環境変数 `CLAUDE_PROJECT_DIR` はハーネス(Claude Code)がフック実行時に注入する値であり、リポジトリ同梱の `.claude/settings.json` の `env` で影響を受け得る。基準ディレクトリが変わっても `trust.gate` は解決後パスの `realpath` をキーに承認を要求するため自己承認はできないが、プロジェクト層を黙って無視させることは可能——ただし上記の通知により無言では起きない。
+
 ### 信頼層: グローバル=信頼 / プロジェクト=要承認(0.7.0)
 
-プロジェクト直下の `.claude-hooks.json` はリポジトリ由来の**信頼できない入力**である(`git clone` しただけで届く)。0.7.0 から、この層は**グローバル設定 `$HOME/.claude/claude-hooks.json` の `trusted_projects` で承認されたプロジェクトに限り**マージされる。未承認なら JSON として解析すらされず、`systemMessage` に承認用エントリが印字される(既定 1 時間のクールダウン付き)。プロジェクト層は生バイト列で読んでから承認判定を行い(`hooks/lib/config.py` の `_read_layer`/`_apply_layer`)、承認された場合のみ同じバイト列をパースする(再オープンしない)。
+プロジェクト直下(プロジェクトルート直下)の `.claude-hooks.json` はリポジトリ由来の**信頼できない入力**である(`git clone` しただけで届く)。0.7.0 から、この層は**グローバル設定 `$HOME/.claude/claude-hooks.json` の `trusted_projects` で承認されたプロジェクトに限り**マージされる。未承認なら JSON として解析すらされず、`systemMessage` に承認用エントリが印字される(既定 1 時間のクールダウン付き)。プロジェクト層は生バイト列で読んでから承認判定を行い(`hooks/lib/config.py` の `_read_layer`/`_apply_layer`)、承認された場合のみ同じバイト列をパースする(再オープンしない)。
 
 ```jsonc
 {
@@ -129,7 +149,7 @@
   },
   "audit_log": {
     "enabled": true,
-    "path": ".claude/logs"                   // 相対パスはcwd起点
+    "path": ".claude/logs"                   // 相対パスはプロジェクトルート起点(0.7.1。絶対パス指定時はそのまま)
   },
   "config_guard": {
     "enabled": true                          // セッション中の設定変更(ConfigChange)を通知。警告専用のためfalseで無効化可
@@ -144,8 +164,8 @@
                                               // "off"=内蔵patternsのみ / "docker"=`docker run`経由で明示opt-in
     "gitleaks_image": "ghcr.io/gitleaks/gitleaks:v8.30.1",
                                               // "docker"モードで使うイメージ(既定は固定タグ)
-    "gitleaks_config": null                  // gitleaksの`-c`に渡す.gitleaks.tomlパス。未指定時は<cwd>/.gitleaks.tomlが
-                                              // 存在すれば自動採用、無ければgitleaks既定設定で実行する
+    "gitleaks_config": null                  // gitleaksの`-c`に渡す.gitleaks.tomlパス。未指定時は<プロジェクトルート>/.gitleaks.tomlが
+                                              // 存在すれば自動採用(0.7.1。基準は上記「基準ディレクトリの決定」参照)、無ければgitleaks既定設定で実行する
   },
   "trusted_projects": {},                    // プロジェクト設定の承認記録(グローバル層専用)。
                                               // { "<realpath>": "sha256:<hex64>" | true | false }。§1 信頼層を参照
