@@ -1368,3 +1368,47 @@ def test_skipped_notices_uses_independent_cooldown_per_directory(monkeypatch, tm
     second = config.load_config(str(proj / "sub"))
     assert len(first["_notices"]) == 2   # sub と outer、それぞれ独立に通知
     assert second["_notices"] == []      # どちらもクールダウン中
+
+
+# ---- 読めない祖先ディレクトリがあっても設定読み込みを壊さない ----
+
+
+def _make_unreadable_ancestor(tmp_path):
+    """cwd の祖先に権限 000 のディレクトリを挟む(root では権限チェックが効かない)。"""
+    outer = tmp_path / "outer"
+    blocked = outer / "blocked"
+    cwd = blocked / "pkg"
+    cwd.mkdir(parents=True)
+    (outer / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    blocked.chmod(0o000)
+    return outer, blocked, cwd
+
+
+def test_skipped_config_dirs_tolerates_unreadable_ancestor(tmp_path):
+    """`Path.is_file()` は 3.10-3.12 で読めない祖先に PermissionError を出す(os.path 版は飲む)。"""
+    if os.geteuid() == 0:
+        return  # root は権限チェックを迂回するので検証にならない
+    outer, blocked, cwd = _make_unreadable_ancestor(tmp_path)
+    try:
+        found = config._skipped_config_dirs(str(cwd), str(tmp_path))
+    finally:
+        blocked.chmod(0o755)
+    assert found == [os.path.realpath(str(outer))]
+
+
+def test_load_config_survives_unreadable_ancestor(monkeypatch, tmp_path):
+    """読めない祖先があっても設定全体が DEFAULTS へ縮退しない(例外が外側まで飛ばない)。"""
+    if os.geteuid() == 0:
+        return
+    _outer, blocked, cwd = _make_unreadable_ancestor(tmp_path)
+    global_path = tmp_path / "global.json"
+    global_path.write_text(
+        json.dumps({"secrets_guard": {"write_protected_paths": ["*/x.txt"]}}), encoding="utf-8"
+    )
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    try:
+        cfg = config.load_config(str(cwd))
+    finally:
+        blocked.chmod(0o755)
+    assert cfg["_errors"] == []
+    assert cfg["secrets_guard"]["write_protected_paths"] == ["*/x.txt"]  # 縮退していない
