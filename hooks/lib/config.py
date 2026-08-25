@@ -204,6 +204,7 @@ def load_config(cwd: str | None = None, *, notices: bool = True) -> dict:
         cfg = copy.deepcopy(DEFAULTS)
         cfg["_errors"] = [f"設定の読み込みに失敗したため既定値を使用します: {exc}"]
         cfg["_notices"] = []
+        cfg["_project_trusted"] = False
         return cfg
 
 
@@ -251,6 +252,10 @@ def _load_config(cwd: str | None = None, *, notices: bool) -> dict:
     # 基準は cwd そのものではなく project_root(cwd)(D1): event["cwd"] は Bash の cd に
     # 追従する一時的な値なので、サブディレクトリに居るだけで設定が読めなくなるのを防ぐ。
     root = project_root(cwd)
+    # 承認済み判定は「グローバル層の trusted_projects」だけを見る。プロジェクト層を
+    # マージした後の cfg["trusted_projects"] で評価すると、プロジェクト設定が自分自身を
+    # 承認するエントリを書けてしまう(自己昇格)。ここで一度だけ確定させ、末尾で使う。
+    project_trusted = trust.is_trusted(root, cfg["trusted_projects"])
     project_path = Path(root or ".") / PROJECT_CONFIG_NAME
     raw = _read_layer(project_path, errors)
     if raw is not None:
@@ -266,6 +271,7 @@ def _load_config(cwd: str | None = None, *, notices: bool) -> dict:
         collected.extend(_skipped_notices(cwd, root, cfg["notice_cooldown_sec"]))
     cfg["_errors"] = errors
     cfg["_notices"] = collected
+    cfg["_project_trusted"] = project_trusted
     return cfg
 
 
