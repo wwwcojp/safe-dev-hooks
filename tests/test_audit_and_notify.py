@@ -148,6 +148,20 @@ class TestBuildToolSummary:
         assert len(summary) <= audit.SUMMARY_MAX_CHARS
         json.loads(summary)
 
+    def test_int_key_beyond_str_conversion_limit_does_not_raise(self):
+        """レビュー I-1 残存分の回帰: _cap_dict のキー変換が値側と同じ安全な経路
+        (_safe_int_str)を通らず素の str() を呼んでいたため、キーが桁数上限超えの
+        intのときも同じ ValueError を送出していた(build_tool_summary({10**5000 - 1:
+        "value"}))。キー側でも例外を出さないことを固定する。
+        """
+        huge_key = 10**5000 - 1  # 5001桁 > 既定上限4300桁
+        summary = audit.build_tool_summary({huge_key: "value"})
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        decoded = json.loads(summary)
+        assert isinstance(decoded, dict)
+        # キーはJSON上つねに文字列化される。プレースホルダー表現が使われていること。
+        assert any("<int ~" in k for k in decoded if isinstance(k, str))
+
     def test_empty_dict_round_trips_unchanged(self):
         assert audit.build_tool_summary({}) == "{}"
 

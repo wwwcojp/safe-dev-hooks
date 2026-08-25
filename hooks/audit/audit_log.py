@@ -86,15 +86,27 @@ def _int_digits_limit() -> int:
     return max(50, limit - 300)  # 既定4300に対し余裕を持たせる
 
 
-def _safe_int_repr(value: int, leaf_chars: int) -> tuple[str, bool]:
-    """巨大intをstr()/json.dumps()に一切通さずに切り詰め表現へ変換する。
+def _safe_int_str(value: int) -> tuple[str, bool]:
+    """intを安全に文字列化する(str()のCPython変換上限によるValueErrorを送出しない)。
 
-    桁数の概算は value.bit_length() から求める(巨大な文字列を作らないので
-    _int_digits_limit() を超えるintに対しても安全)。
+    戻り値は (文字列化した表現, プレースホルダーに倒したか) のタプル。呼び出し側は
+    2つ目の要素だけで判定でき、桁数を確かめるためだけに再度 str(value) を呼ぶ必要が
+    ない(それ自体が同じ ValueError を送出しうるため)。桁数の概算は
+    value.bit_length() から求める(巨大な文字列を作らないので _int_digits_limit()
+    を超えるintに対しても安全)。_cap_value の数値分岐と _cap_dict のキー変換の
+    両方から共有する、intを文字列化する唯一の経路。
     """
     digits = int(value.bit_length() * 0.3010299956639812) + 1  # log10(2) ≈ 0.30103
-    sign = "-" if value < 0 else ""
-    return _truncate_str(f"{sign}<int ~{digits}digits>", leaf_chars)
+    if digits > _int_digits_limit():
+        sign = "-" if value < 0 else ""
+        return f"{sign}<int ~{digits}digits>", True
+    return str(value), False
+
+
+def _safe_int_repr(value: int, leaf_chars: int) -> tuple[str, bool]:
+    """巨大intをstr()/json.dumps()に一切通さずに切り詰め表現へ変換する。"""
+    rendered, _is_placeholder = _safe_int_str(value)
+    return _truncate_str(rendered, leaf_chars)
 
 
 def _cap_value(value, depth: int, leaf_chars: int, max_breadth: int, max_key_chars: int):
@@ -116,12 +128,11 @@ def _cap_value(value, depth: int, leaf_chars: int, max_breadth: int, max_key_cha
     if value is None or isinstance(value, bool):
         return value, False
     if isinstance(value, int):
-        # str(int)自体が桁数上限でValueErrorを送出し得るため、変換を試す前に
-        # bit_length()(文字列化しない)で桁数を概算して安全側に倒す。
-        if value.bit_length() * 0.3010299956639812 + 1 > _int_digits_limit():
-            return _safe_int_repr(value, leaf_chars)
-        rendered = str(value)
-        if len(rendered) <= leaf_chars:
+        # str(int)自体が桁数上限でValueErrorを送出し得るため、_safe_int_str()経由でのみ
+        # 文字列化する(直接 str(value) を呼ばない。再判定のための str(value) 呼び出しも
+        # 同じ理由で行わない)。
+        rendered, is_placeholder = _safe_int_str(value)
+        if not is_placeholder and len(rendered) <= leaf_chars:
             return value, False
         return _truncate_str(rendered, leaf_chars)
     if isinstance(value, float):
@@ -142,7 +153,13 @@ def _cap_dict(d: dict, depth: int, leaf_chars: int, max_breadth: int, max_key_ch
     out: dict = {}
     seen: set[str] = set()
     for raw_key in kept_keys:
-        key_str = raw_key if isinstance(raw_key, str) else str(raw_key)
+        if isinstance(raw_key, str):
+            key_str = raw_key
+        elif isinstance(raw_key, int) and not isinstance(raw_key, bool):
+            # bool は int のサブクラスだが True/False の文字列化は安全なので除外する。
+            key_str, _is_placeholder = _safe_int_str(raw_key)
+        else:
+            key_str = str(raw_key)
         key_str, key_truncated = _truncate_str(key_str, max_key_chars)
         truncated = truncated or key_truncated
         base, i = key_str, 1
