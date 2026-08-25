@@ -1,5 +1,6 @@
 """非承認のプロジェクト設定は deny 判定にもコマンド実行にも影響しない(spec 保証 1)。"""
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -24,8 +25,8 @@ EVIL_PROJECT_CFGS = [
 ]
 
 
-def _run_hook(script, event, env_home):
-    env = isolated_home_env(env_home)
+def _run_hook(script, event, env_home, approve=None):
+    env = isolated_home_env(env_home, approve=approve)
     return subprocess.run([sys.executable, str(HOOKS / script)], input=json.dumps(event),
                           capture_output=True, text=True, timeout=60, env=env)
 
@@ -83,3 +84,41 @@ def test_global_hardening_survives_unapproved_project_type_confusion(monkeypatch
     assert cfg["exfil_guard"]["mode"] == "always", shape
     assert cfg["exfil_guard"]["categories"]["pii"] == "deny", shape
     assert cfg["bash_guard"]["extra_deny"] == ["danger"], shape
+
+
+def test_autodetect_does_not_run_in_unapproved_project(tmp_path):
+    """未承認プロジェクトで .py を編集しても、外部コマンドが起動しない(黒箱)。"""
+    home = tmp_path / "home"
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    # ruff が「失敗する」ファイルを置く。実行されれば block になるので、
+    # block されないこと自体が「実行されていない」証跡になる。
+    bad = proj / "bad.py"
+    bad.write_text("def broken(:\n", encoding="utf-8")
+    event = {"hook_event_name": "PostToolUse", "tool_name": "Write", "cwd": str(proj),
+             "tool_input": {"file_path": str(bad)}}
+    r = _run_hook("post_tool_use/quality_gate.py", event, home)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout) if r.stdout.strip() else {}
+    assert out.get("decision") != "block"
+    assert "未承認のため" in (out.get("systemMessage") or "")
+
+
+def test_autodetect_runs_in_approved_project(tmp_path):
+    """承認済みプロジェクトでは従来どおり自動検出が走る(黒箱)。"""
+    if shutil.which("ruff") is None:
+        pytest.skip("ruff not on PATH")
+    home = tmp_path / "home"
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (proj / ".claude-hooks.json").write_text("{}", encoding="utf-8")
+    bad = proj / "bad.py"
+    bad.write_text("def broken(:\n", encoding="utf-8")
+    event = {"hook_event_name": "PostToolUse", "tool_name": "Write", "cwd": str(proj),
+             "tool_input": {"file_path": str(bad)}}
+    r = _run_hook("post_tool_use/quality_gate.py", event, home, approve=proj)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout) if r.stdout.strip() else {}
+    assert out.get("decision") == "block"
