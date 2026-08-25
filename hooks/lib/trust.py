@@ -52,6 +52,24 @@ def classify_entry(value) -> tuple[str, str | None]:
     return "ignored", None
 
 
+def is_trusted(root: str | None, trusted_projects) -> bool:
+    """root が trusted_projects で承認済みかを返す(0.8.0)。例外を出さない。
+
+    「承認済み」= ピン留め(`"sha256:…"`)またはピン留めなし(`true`)のエントリがあること。
+    `false`(明示的な不承認)・不正な値・未登録は未承認。
+    `.claude-hooks.json` の有無は問わない — 判定しているのは「利用者がこのディレクトリを
+    信頼したか」であり、設定ファイルを採用するかどうか(`gate`)とは別の問いである。
+    敵対的リポジトリは設定ファイルを同梱しなければよいので、設定の採否で代用できない。
+    """
+    if root is None or not isinstance(trusted_projects, dict):
+        return False
+    try:
+        kind, _ = classify_entry(trusted_projects.get(project_key(root)))
+    except Exception:
+        return False
+    return kind in ("pinned", "unpinned")
+
+
 def cooldown_seconds(value) -> int:
     """通知クールダウン秒数を検証する。bool でない 0 以上の int 以外は既定値。"""
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:

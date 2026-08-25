@@ -495,3 +495,69 @@ def test_notify_rejected_env_wrapper_catches_internal_exception(monkeypatch, tmp
 
     monkeypatch.setattr(trust, "_notify_skipped", boom)
     assert _notify_env(state_path=tmp_path / "s.json") == []
+
+
+# --- is_trusted: 承認済みプロジェクトの判定(0.8.0) ---
+
+
+def test_is_trusted_accepts_pinned_and_unpinned():
+    key = "/home/alice/proj"
+    digest = "sha256:" + "a" * 64
+    assert trust.is_trusted(key, {key: digest}) is True
+    assert trust.is_trusted(key, {key: True}) is True
+
+
+def test_is_trusted_rejects_denied_and_unknown():
+    key = "/home/alice/proj"
+    assert trust.is_trusted(key, {key: False}) is False
+    assert trust.is_trusted(key, {}) is False
+    assert trust.is_trusted(key, {"/home/alice/other": True}) is False
+
+
+def test_is_trusted_rejects_malformed_entry_values():
+    key = "/home/alice/proj"
+    for bad in ["sha256:zz", "sha256:" + "a" * 63, "", 0, 1, [], {}, None, 1.5]:
+        assert trust.is_trusted(key, {key: bad}) is False, bad
+
+
+def test_is_trusted_rejects_non_dict_trusted_projects():
+    for bad in [None, [], "x", 0, True]:
+        assert trust.is_trusted("/home/alice/proj", bad) is False, bad
+
+
+def test_is_trusted_returns_false_for_none_root():
+    assert trust.is_trusted(None, {"/home/alice/proj": True}) is False
+
+
+def test_is_trusted_matches_by_realpath(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(proj)
+    entry = {os.path.realpath(str(proj)): True}
+    assert trust.is_trusted(str(link), entry) is True
+
+
+def test_is_trusted_never_raises():
+    class Exploding:
+        def get(self, *a, **k):
+            raise RuntimeError("boom")
+    assert trust.is_trusted("/home/alice/proj", Exploding()) is False
+
+
+def test_is_trusted_short_circuits_on_none_root_before_lookup(monkeypatch):
+    # 呼び出し側からは None,dict どちらの引数でも False にしか見えないため、
+    # `root is None or ...` の短絡自体を白箱で固定する(内部関数を差し替えて分岐を分離)。
+    def fake_project_key(root):
+        return "should-not-be-used"
+    monkeypatch.setattr(trust, "project_key", fake_project_key)
+    assert trust.is_trusted(None, {"should-not-be-used": True}) is False
+
+
+def test_is_trusted_except_branch_returns_false(monkeypatch):
+    # dict 型が確定した後の trusted_projects.get()/classify_entry() は通常経路では
+    # 例外を出さないため、except の「安全側に倒す」契約を白箱で直接固定する。
+    def boom(value):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(trust, "classify_entry", boom)
+    assert trust.is_trusted("/home/alice/proj", {"/home/alice/proj": True}) is False
