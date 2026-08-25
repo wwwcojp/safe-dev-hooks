@@ -2,6 +2,7 @@ import io
 import json
 import os
 import shlex
+from unittest import mock
 
 import pytest
 from helpers import approve_project, load_hook
@@ -13,27 +14,29 @@ qg = load_hook("post_tool_use/quality_gate.py")
 
 def test_resolve_commands_from_config(tmp_path):
     cfg = {"commands": {"*.py": ["mylint {file}"]}}
-    got = qg.resolve_commands(str(tmp_path / "app.py"), cfg, str(tmp_path))
+    got = qg.resolve_commands(str(tmp_path / "app.py"), cfg, str(tmp_path), trusted=False)
     assert got == [f"mylint {tmp_path / 'app.py'}"]
 
 
 def test_resolve_commands_no_match(tmp_path):
     cfg = {"commands": {"*.py": ["mylint {file}"]}}
-    assert qg.resolve_commands(str(tmp_path / "app.md"), cfg, str(tmp_path)) == []
+    assert qg.resolve_commands(str(tmp_path / "app.md"), cfg, str(tmp_path), trusted=False) == []
 
 
 def test_resolve_commands_quotes_spaced_paths(tmp_path):
     cfg = {"commands": {"*.py": ["mylint {file}"]}}
     spaced = str(tmp_path / "my dir" / "app.py")
-    got = qg.resolve_commands(spaced, cfg, str(tmp_path))
+    got = qg.resolve_commands(spaced, cfg, str(tmp_path), trusted=False)
     assert got and shlex.split(got[0])[-1] == spaced
 
 
 def test_autodetect_requires_project_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
-    assert qg.resolve_commands(str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path)) == []
+    assert qg.resolve_commands(
+        str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path), trusted=True
+    ) == []
     (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
-    got = qg.resolve_commands(str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path))
+    got = qg.resolve_commands(str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path), trusted=True)
     assert got and got[0].startswith("ruff check")
 
 
@@ -61,7 +64,7 @@ def test_autodetect_finds_marker_from_project_root_in_subdirectory(tmp_path, mon
     (root / "pyproject.toml").write_text("", encoding="utf-8")
     sub = root / "a" / "b"
     sub.mkdir(parents=True)
-    got = qg.resolve_commands(str(sub / "app.py"), {"commands": {}}, str(sub))
+    got = qg.resolve_commands(str(sub / "app.py"), {"commands": {}}, str(sub), trusted=True)
     assert got and got[0].startswith("ruff check")
 
 
@@ -73,7 +76,7 @@ def test_autodetect_ignores_marker_outside_project_root(tmp_path, monkeypatch):
     (root / ".git").mkdir(parents=True)
     sub = root / "a" / "b"
     sub.mkdir(parents=True)
-    got = qg.resolve_commands(str(sub / "app.py"), {"commands": {}}, str(sub))
+    got = qg.resolve_commands(str(sub / "app.py"), {"commands": {}}, str(sub), trusted=True)
     assert got == []
 
 
@@ -152,3 +155,121 @@ def test_main_skips_missing_file(monkeypatch, tmp_path, capsys):
         "tool_input": {"file_path": str(tmp_path / "gone.py")},
     }
     assert _run_main(monkeypatch, event, capsys) is None
+
+
+# --- 自動検出は承認済みプロジェクトでのみ実行する(0.8.0) ---
+
+
+def test_resolve_commands_autodetect_runs_when_trusted(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    out = qg.resolve_commands("a.py", {"commands": {}}, str(tmp_path), trusted=True)
+    assert out == ["ruff check a.py"]
+
+
+def test_resolve_commands_autodetect_skipped_when_untrusted(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    assert qg.resolve_commands("a.py", {"commands": {}}, str(tmp_path), trusted=False) == []
+
+
+def test_resolve_commands_explicit_commands_run_even_when_untrusted(tmp_path):
+    cfg = {"commands": {"*.py": ["echo checked {file}"]}}
+    out = qg.resolve_commands("a.py", cfg, str(tmp_path), trusted=False)
+    assert out == ["echo checked a.py"]
+
+
+def test_resolve_commands_untrusted_never_invokes_subprocess(monkeypatch, tmp_path):
+    """0.8.0 回帰ピン: 未承認では自動検出のコマンド解決自体で外部プロセスを起動しない。
+
+    実行ファイルの有無(shutil.which)を確認するだけでも外部プロセス起動には当たらないが、
+    念のため where subprocess.run が一切呼ばれないことを spy で固定する
+    (返り値のコマンド一覧が空であることのチェックだけでは、将来の変更で
+    「一覧は空だが起動はしてしまう」経路が紛れ込むのを検出できない)。
+    """
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text("", encoding="utf-8")
+    spy = mock.Mock(
+        side_effect=AssertionError("resolve_commands中にsubprocessを起動してはならない")
+    )
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    got = qg.resolve_commands("a.py", {"commands": {}}, str(tmp_path), trusted=False)
+    assert got == []
+    spy.assert_not_called()
+
+
+def test_main_untrusted_project_does_not_start_any_subprocess(monkeypatch, tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+
+    def _boom(*a, **k):
+        raise AssertionError("未承認プロジェクトで外部コマンドを起動してはならない")
+
+    monkeypatch.setattr(qg.subprocess, "run", _boom)
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert out is not None
+    assert "未承認のため" in out["systemMessage"]
+
+
+def test_main_untrusted_notice_is_cooldown_limited(monkeypatch, tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    first = _run_main(monkeypatch, event, capsys)
+    second = _run_main(monkeypatch, event, capsys)
+    assert first is not None and "未承認のため" in first["systemMessage"]
+    assert second is None or "未承認のため" not in (second.get("systemMessage") or "")
+
+
+def test_main_untrusted_notice_omits_repo_supplied_command_text(monkeypatch, tmp_path, capsys):
+    # 通知にリポジトリ由来のコマンド文字列を載せない(spec #3)
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    target = tmp_path / "a.js"
+    target.write_text("const x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    msg = (out or {}).get("systemMessage", "")
+    assert "eslint.config.js" not in msg.split("承認するとこのプロジェクトの設定ファイル")[0]
+    assert "npx" not in msg
+
+
+def test_main_trusted_project_still_runs_checks(monkeypatch, tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
+    calls = []
+    monkeypatch.setattr(qg, "run_checks", lambda cmds, cwd: calls.append(cmds) or [])
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    assert calls and calls[0] == [f"ruff check {shlex.quote(str(target))}"]
+
+
+def test_main_trusted_project_without_markers_emits_no_autodetect_notice(
+    monkeypatch, tmp_path, capsys
+):
+    """承認済みでもマーカーファイルが無ければコマンドは空になるが、これは承認とは無関係
+    (自動検出の対象外)なので `notify_autodetect_skipped` の通知を出してはならない。"""
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("マーカーが無いのに外部コマンドを起動してはならない")
+    ))
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    msg = (out or {}).get("systemMessage", "")
+    assert "未承認のため" not in msg

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from hooks.lib import config, hook_io  # noqa: E402
+from hooks.lib import config, hook_io, trust  # noqa: E402
 
 WRITE_TOOLS = ("Edit", "Write")
 COMMAND_TIMEOUT_SEC = 45
@@ -25,7 +25,7 @@ AUTO_DETECT = [
 ]
 
 
-def resolve_commands(file_path: str, cfg: dict, cwd: str) -> list:
+def resolve_commands(file_path: str, cfg: dict, cwd: str, *, trusted: bool) -> list:
     name = Path(file_path).name
     quoted = shlex.quote(file_path)
     commands = []
@@ -34,6 +34,11 @@ def resolve_commands(file_path: str, cfg: dict, cwd: str) -> list:
             commands += [c.replace("{file}", quoted) for c in cmds]
     if commands:
         return commands
+    # 自動検出は承認済みプロジェクトでのみ(0.8.0)。ruff/rustfmt/eslint はいずれも
+    # プロジェクト同梱の設定を読み、eslint.config.js は JavaScript として評価される。
+    # 利用者が明示した commands は 0.7.0 の信頼ゲートを既に通っているため対象外。
+    if not trusted:
+        return []
     # event["cwd"] はBashのcdに追従する一時的な値なので基準にできない(D1と同じ理由)。
     # config.project_root で解決したプロジェクトルート基準に前提設定ファイルを探す。
     root = config.project_root(cwd) or cwd
@@ -77,11 +82,14 @@ def main() -> None:
         hook_io.finalize(None, cfg_all)
     file_path = (event.get("tool_input") or {}).get("file_path", "")
     cwd = event.get("cwd") or "."
+    root = config.project_root(cwd) or cwd
+    trusted = bool(cfg_all.get("_project_trusted"))
     if not file_path or not Path(file_path).is_file():
         hook_io.finalize(None, cfg_all)
     try:
-        commands = resolve_commands(file_path, cfg, cwd)
-        failures = run_checks(commands, cwd) if commands else []
+        commands = resolve_commands(file_path, cfg, root, trusted=trusted)
+        skipped = not commands and not trusted
+        failures = run_checks(commands, root) if commands else []
     except Exception as exc:
         hook_io.fail_open("quality_gate", exc)
         return
@@ -99,6 +107,15 @@ def main() -> None:
                     "additionalContext": f"[safe-dev-hooks] 品質チェック警告:\n{detail}",
                 }
             }
+    if skipped:
+        notices = trust.notify_autodetect_skipped(
+            root, trust.cooldown_seconds(cfg_all.get("notice_cooldown_sec")),
+        )
+        if notices:
+            out = dict(out or {})
+            existing = out.get("systemMessage")
+            msg = "\n".join(notices)
+            out["systemMessage"] = f"{existing}\n{msg}" if existing else msg
     hook_io.finalize(out, cfg_all)
 
 
