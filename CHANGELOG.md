@@ -6,7 +6,7 @@
 
 ### Fixed
 - **`audit_log` の `tool_summary` が、長い `tool_input` で高確率に壊れたJSONになっていた** — 旧実装は `json.dumps(tool_input)[:500]` と直列化後の文字列を単純スライスしていたため、切れ目が文字列リテラルの途中に落ちると `json.loads` できないレコードになっていた。実運用ログ(17日分・3プロジェクト)で計測したところ、Bashレコード13,968件中2,126件(15%)が該当し、すべて500文字ちょうどで頭打ちになっていた(原因はこの単純スライスのみと特定)。監査ログの目的(何が実行されたかの記録)は、パースできないレコードでは果たせない。
-  `hooks/audit/audit_log.py` に `build_tool_summary()` を追加し、直列化する**前**に構造(値の長さ・キー/要素数・入れ子の深さ)を切り詰めるよう変更した。これにより `tool_summary` は常に妥当なJSON文字列になり(`SUMMARY_MAX_CHARS = 500` の予算は据え置き)、切り詰めが起きた箇所には `__audit_truncated__`/`__omitted_keys__`/`__omitted_items__`/値末尾の `…[+N c]` タグを付与して、読者が「全文を見ている」と誤解しないようにした。マーカー形式の詳細は [docs/hooks/audit_log.md](docs/hooks/audit_log.md)。
+  `hooks/audit/audit_log.py` に `build_tool_summary()` を追加し、直列化する**前**に構造(値の長さ・キー/要素数・入れ子の深さ)を切り詰めるよう変更した。これにより `tool_summary` は常に妥当なJSON文字列になり(`SUMMARY_MAX_CHARS = 500` の予算は据え置き)、切り詰めが起きた箇所には `__audit_truncated__`/`__omitted_keys__`/`__omitted_items__`/値末尾の `…[+Nc]` タグを付与して、読者が「全文を見ている」と誤解しないようにした。マーカー形式の詳細は [docs/hooks/audit_log.md](docs/hooks/audit_log.md)。
   `tool_summary` は引き続きJSON文字列を格納する文字列フィールド(オンディスクの形は変更なし)。既存の(0.7.2以前の)ログファイルは遡って直さないため、壊れたレコードはそのまま残る。
 
 ## [0.7.2] - 2026-08-25
