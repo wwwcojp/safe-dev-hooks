@@ -27,8 +27,8 @@ SUMMARY_MAX_CHARS = 500
 #
 # マーカー形式(このモジュールの外で tool_summary を解析するツール向けの契約):
 #   - 文字列値の末尾切り詰め: 元の文字列の後ろに TRUNCATED_TAG_PREFIX + 省略した
-#     文字数 + "c]" を付与する(例: "...[+120c]" の "..." 部分は実際には "…")。
-#     正規表現なら `re.search(r"…\[\+\d+c\]$", value)` で検出できる。
+#     文字数 + "c]" を付与する(例: "...[+120c]" の "..." 部分は実際には "…"。
+#     空白は入らない)。正規表現なら `re.search(r"…\[\+\d+c\]$", value)` で検出できる。
 #   - dict/list のうちキー/要素を間引いた場合: その階層に OMITTED_KEYS_KEY(dict)
 #     / OMITTED_ITEMS_KEY(list に混ぜる {"__omitted_items__": N} 要素)で
 #     省略した個数を記録する。
@@ -38,15 +38,20 @@ SUMMARY_MAX_CHARS = 500
 #     末尾タグ(上記)のみが切り詰めの印になる。
 #   - どうしても収まらない病的な入力(巨大なキー名が大量にある等)に対する最終手段
 #     として、{"__audit_truncated__": true} のみの最小オブジェクトを返す。
-_LEAF_CHARS_INITIAL = 480
-_LEAF_CHARS_FLOOR = 20
+#
+# サイズの収束方式: 葉の文字数上限(leaf_chars)は「収まる最大値」を二分探索で
+# 直接求める(実測した直列化後の長さで判定するため、JSONエスケープでバックスラッシュ
+# 等が2倍に膨らむケースも取りこぼさない)。leaf_chars=0でも収まらない場合のみ、
+# キー/要素数の上限(max_breadth)とキー名の上限(max_key_chars)を段階的に縮小して
+# やり直す。
 _MAX_BREADTH_INITIAL = 12
 _MAX_BREADTH_FLOOR = 1
-_MAX_KEY_CHARS = 80
+_MAX_KEY_CHARS_INITIAL = 80
+_MAX_KEY_CHARS_FLOOR = 20
 _MAX_DEPTH = 4
-_FIT_ATTEMPTS = 40
+_SHRINK_STEPS = 10  # max_breadthは12→…→floor 1まで高々4段で収束するための十分な余裕
 
-TRUNCATED_TAG_PREFIX = "…[+"  # 値末尾の切り詰めマーカーの接頭辞("…[+")
+TRUNCATED_TAG_PREFIX = "…[+"  # 値末尾の切り詰めマーカーの接頭辞("…[+Nc]"。空白は入らない)
 TRUNCATED_MARKER_KEY = "__audit_truncated__"
 OMITTED_KEYS_KEY = "__omitted_keys__"
 OMITTED_ITEMS_KEY = "__omitted_items__"
@@ -63,7 +68,36 @@ def _truncate_str(s: str, limit: int) -> tuple[str, bool]:
     return f"{s[:limit]}{TRUNCATED_TAG_PREFIX}{omitted}c]", True
 
 
-def _cap_value(value, depth: int, leaf_chars: int, max_breadth: int):
+def _int_digits_limit() -> int:
+    """str(int)/json.dumps(int)を安全に呼べる最大桁数(概算)を返す。
+
+    CPython 3.11+ は int<->str 変換に sys.get_int_max_str_digits()(既定4300)の
+    上限を持ち、超えると ValueError を送出する(str(value)へのフォールバックでも
+    同じ例外が起きるため、変換を試みる前に避ける必要がある)。3.10以前はこの
+    仕組み自体が無いため無制限だが、そもそも監査ログの表示にそれほどの桁数は
+    不要なので1000桁を上限とする。
+    """
+    getter = getattr(sys, "get_int_max_str_digits", None)
+    if getter is None:
+        return 1000  # 3.10: 無制限(このAPI自体が無い)
+    limit = getter()
+    if limit == 0:  # 0 は sys.set_int_max_str_digits(0) による「無制限」設定
+        return 1000
+    return max(50, limit - 300)  # 既定4300に対し余裕を持たせる
+
+
+def _safe_int_repr(value: int, leaf_chars: int) -> tuple[str, bool]:
+    """巨大intをstr()/json.dumps()に一切通さずに切り詰め表現へ変換する。
+
+    桁数の概算は value.bit_length() から求める(巨大な文字列を作らないので
+    _int_digits_limit() を超えるintに対しても安全)。
+    """
+    digits = int(value.bit_length() * 0.3010299956639812) + 1  # log10(2) ≈ 0.30103
+    sign = "-" if value < 0 else ""
+    return _truncate_str(f"{sign}<int ~{digits}digits>", leaf_chars)
+
+
+def _cap_value(value, depth: int, leaf_chars: int, max_breadth: int, max_key_chars: int):
     """任意のJSON値を(値, 切り詰めたか)のタプルとして返す。深さ・幅・葉の長さを制限する。"""
     if depth >= _MAX_DEPTH and isinstance(value, (dict, list)):
         try:
@@ -74,27 +108,33 @@ def _cap_value(value, depth: int, leaf_chars: int, max_breadth: int):
             preview = str(value)
         return _truncate_str(preview, leaf_chars)
     if isinstance(value, dict):
-        return _cap_dict(value, depth, leaf_chars, max_breadth)
+        return _cap_dict(value, depth, leaf_chars, max_breadth, max_key_chars)
     if isinstance(value, list):
-        return _cap_list(value, depth, leaf_chars, max_breadth)
+        return _cap_list(value, depth, leaf_chars, max_breadth, max_key_chars)
     if isinstance(value, str):
         return _truncate_str(value, leaf_chars)
     if value is None or isinstance(value, bool):
         return value, False
-    if isinstance(value, (int, float)):
-        try:
-            rendered = json.dumps(value)
-        except (TypeError, ValueError):
-            rendered = str(value)
+    if isinstance(value, int):
+        # str(int)自体が桁数上限でValueErrorを送出し得るため、変換を試す前に
+        # bit_length()(文字列化しない)で桁数を概算して安全側に倒す。
+        if value.bit_length() * 0.3010299956639812 + 1 > _int_digits_limit():
+            return _safe_int_repr(value, leaf_chars)
+        rendered = str(value)
         if len(rendered) <= leaf_chars:
             return value, False
-        return _truncate_str(str(value), leaf_chars)
+        return _truncate_str(rendered, leaf_chars)
+    if isinstance(value, float):
+        rendered = repr(value)  # NaN/Infinityを含め例外を出さない
+        if len(rendered) <= leaf_chars:
+            return value, False
+        return _truncate_str(rendered, leaf_chars)
     # tool_input はJSONデコード結果のみを想定するためここには通常到達しないが、
     # 未知の型が来ても例外を出さず文字列化して切り詰める(保険)。
     return _truncate_str(str(value), leaf_chars)
 
 
-def _cap_dict(d: dict, depth: int, leaf_chars: int, max_breadth: int):
+def _cap_dict(d: dict, depth: int, leaf_chars: int, max_breadth: int, max_key_chars: int):
     keys = list(d.keys())
     kept_keys = keys[:max_breadth]
     omitted = len(keys) - len(kept_keys)
@@ -103,14 +143,16 @@ def _cap_dict(d: dict, depth: int, leaf_chars: int, max_breadth: int):
     seen: set[str] = set()
     for raw_key in kept_keys:
         key_str = raw_key if isinstance(raw_key, str) else str(raw_key)
-        key_str, key_truncated = _truncate_str(key_str, _MAX_KEY_CHARS)
+        key_str, key_truncated = _truncate_str(key_str, max_key_chars)
         truncated = truncated or key_truncated
         base, i = key_str, 1
         while key_str in seen:
             key_str = f"{base}#{i}"
             i += 1
         seen.add(key_str)
-        value, value_truncated = _cap_value(d[raw_key], depth + 1, leaf_chars, max_breadth)
+        value, value_truncated = _cap_value(
+            d[raw_key], depth + 1, leaf_chars, max_breadth, max_key_chars
+        )
         truncated = truncated or value_truncated
         out[key_str] = value
     if omitted > 0:
@@ -120,13 +162,15 @@ def _cap_dict(d: dict, depth: int, leaf_chars: int, max_breadth: int):
     return out, truncated
 
 
-def _cap_list(lst: list, depth: int, leaf_chars: int, max_breadth: int):
+def _cap_list(lst: list, depth: int, leaf_chars: int, max_breadth: int, max_key_chars: int):
     kept = lst[:max_breadth]
     omitted = len(lst) - len(kept)
     truncated = omitted > 0
     out = []
     for item in kept:
-        value, value_truncated = _cap_value(item, depth + 1, leaf_chars, max_breadth)
+        value, value_truncated = _cap_value(
+            item, depth + 1, leaf_chars, max_breadth, max_key_chars
+        )
         truncated = truncated or value_truncated
         out.append(value)
     if omitted > 0:
@@ -136,28 +180,50 @@ def _cap_list(lst: list, depth: int, leaf_chars: int, max_breadth: int):
     return out, truncated
 
 
+def _serialize(value, leaf_chars: int, max_breadth: int, max_key_chars: int) -> str:
+    capped, _truncated = _cap_value(value, 0, leaf_chars, max_breadth, max_key_chars)
+    return json.dumps(capped, ensure_ascii=False)
+
+
 def build_tool_summary(tool_input) -> str:
     """tool_input から、常にjson.loads可能でSUMMARY_MAX_CHARS以内のtool_summary文字列を作る。
 
-    直列化後の実測長で収まるまで葉の文字数上限→キー/要素数上限の順に段階的に縮小する
-    (JSONエスケープでバックスラッシュ等が2倍に膨らむケースも実測ベースなので取りこぼさない)。
-    それでも収まらない病的な入力は _FALLBACK_SUMMARY(妥当なJSON・SUMMARY_MAX_CHARS未満)
-    を返す。この不変条件(常に妥当なJSON・常にSUMMARY_MAX_CHARS以内)はテストで固定している。
+    典型ケース(単一の長いコマンドなど)ではSUMMARY_MAX_CHARSぎりぎりまで内容を見せたい
+    ので、まずleaf_chars=SUMMARY_MAX_CHARS(切り詰め無しに近い)を試し、収まらなければ
+    収まる最大のleaf_charsを二分探索で直接求める(半減ずつの当て推量だと、JSON外周の
+    オーバーヘッドを見込んでいないため本来使えるはずの予算を無駄にしてしまう)。
+    leaf_chars=0でも収まらない病的な入力(キー数・キー名自体が過大)にだけ、
+    キー/要素数の上限とキー名の上限を段階的に縮小してやり直す。最終手段として
+    _FALLBACK_SUMMARY(妥当なJSON・SUMMARY_MAX_CHARS未満)を返す。この不変条件
+    (常に妥当なJSON・常にSUMMARY_MAX_CHARS以内)はテストで固定している。
     """
     value = tool_input if tool_input else {}
-    leaf_chars = _LEAF_CHARS_INITIAL
     max_breadth = _MAX_BREADTH_INITIAL
-    for _ in range(_FIT_ATTEMPTS):
-        capped, _truncated = _cap_value(value, 0, leaf_chars, max_breadth)
-        serialized = json.dumps(capped, ensure_ascii=False)
+    max_key_chars = _MAX_KEY_CHARS_INITIAL
+    for _ in range(_SHRINK_STEPS):
+        serialized = _serialize(value, SUMMARY_MAX_CHARS, max_breadth, max_key_chars)
         if len(serialized) <= SUMMARY_MAX_CHARS:
             return serialized
-        if leaf_chars > _LEAF_CHARS_FLOOR:
-            leaf_chars = max(_LEAF_CHARS_FLOOR, leaf_chars // 2)
-        elif max_breadth > _MAX_BREADTH_FLOOR:
-            max_breadth = max(_MAX_BREADTH_FLOOR, max_breadth // 2)
-        else:
-            break
+        floor_serialized = _serialize(value, 0, max_breadth, max_key_chars)
+        if len(floor_serialized) > SUMMARY_MAX_CHARS:
+            if max_breadth > _MAX_BREADTH_FLOOR:
+                max_breadth = max(_MAX_BREADTH_FLOOR, max_breadth // 2)
+                max_key_chars = max(_MAX_KEY_CHARS_FLOOR, max_key_chars // 2)
+                continue
+            return _FALLBACK_SUMMARY
+        # leaf_chars=0 は収まり、leaf_chars=SUMMARY_MAX_CHARS は収まらない
+        # → 収まる最大の leaf_chars を二分探索する(実測した長さで判定)。
+        lo, hi = 0, SUMMARY_MAX_CHARS
+        best = floor_serialized
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            candidate = _serialize(value, mid, max_breadth, max_key_chars)
+            if len(candidate) <= SUMMARY_MAX_CHARS:
+                lo = mid
+                best = candidate
+            else:
+                hi = mid - 1
+        return best
     return _FALLBACK_SUMMARY
 
 

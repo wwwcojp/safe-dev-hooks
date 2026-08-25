@@ -69,6 +69,28 @@ class TestBuildToolSummary:
         # 値の一部は残っている(空になっていない)
         assert decoded["command"].startswith("echo ")
 
+    def test_huge_single_value_shows_most_of_the_budget(self):
+        """レビュー I-2 回帰: 単一の長いコマンドという最頻ケースで、可視文字数が
+        leaf_charsの当て推量(旧: 480→240への半減)で無駄に切り詰められないこと。
+        旧実装(壊れたJSON)は約493文字を見せていた・修正前の二分探索無し版は240文字
+        まで落ち込んでいた。二分探索は実測でこのケースの真の最大値(447文字、
+        summary長は予算ちょうどの500)に到達する。実装の微調整で数文字動く余地を
+        見て440文字以上を最低ラインとして固定する。
+        """
+        command = "echo " + "x" * 2000
+        tool_input = {"command": command}
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        decoded = json.loads(summary)
+        visible = decoded["command"]
+        # visible と元のコマンドの共通接頭辞長 = 切り詰めタグより前に残っている実文字数
+        prefix_len = 0
+        for a, b in zip(visible, command):
+            if a != b:
+                break
+            prefix_len += 1
+        assert prefix_len >= 440, f"visible={prefix_len} chars (summary len={len(summary)})"
+
     def test_many_keys_are_capped_and_counted(self):
         tool_input = {f"key{i}": f"value{i}" for i in range(200)}
         summary = audit.build_tool_summary(tool_input)
@@ -108,6 +130,21 @@ class TestBuildToolSummary:
     def test_huge_non_string_value_is_bounded_too(self):
         tool_input = {"big_number": int("9" * 2000)}
         summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        json.loads(summary)
+
+    def test_int_beyond_str_conversion_limit_does_not_raise(self):
+        """レビュー I-1 回帰: CPythonのint<->str変換上限(既定4300桁、3.11+)を超える整数でも
+        ValueErrorを送出しないこと。トップレベル・dict内・list内のいずれでも再現していた。
+        """
+        huge = 10**5000  # 5001桁 > 既定上限4300桁
+        for tool_input in (huge, {"big": huge}, [huge]):
+            summary = audit.build_tool_summary(tool_input)
+            assert len(summary) <= audit.SUMMARY_MAX_CHARS
+            json.loads(summary)
+
+    def test_negative_int_beyond_str_conversion_limit_does_not_raise(self):
+        summary = audit.build_tool_summary({"big": -(10**5000)})
         assert len(summary) <= audit.SUMMARY_MAX_CHARS
         json.loads(summary)
 
