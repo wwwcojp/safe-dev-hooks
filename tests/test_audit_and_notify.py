@@ -48,6 +48,157 @@ def test_audit_truncates_large_input(monkeypatch, tmp_path, capsys):
     files = list((tmp_path / ".claude" / "logs").glob("audit-*.jsonl"))
     record = json.loads(files[0].read_text(encoding="utf-8").strip())
     assert len(record["tool_summary"]) <= 500
+    # 中途半端に切れた不正JSONを埋め込むのではなく、tool_summary自体がJSONとして読める。
+    decoded = json.loads(record["tool_summary"])
+    assert audit.TRUNCATED_MARKER_KEY in decoded
+
+
+class TestBuildToolSummary:
+    """tool_summary の構築ロジック(hooks/audit/audit_log.build_tool_summary)を直接固定する。
+
+    500文字を超える巨大コマンドを与えたとき、出力が常に json.loads できること・
+    SUMMARY_MAX_CHARS を超えないことが本バグ修正の核心契約。
+    """
+
+    def test_huge_single_value_still_parses_and_marks_truncation(self):
+        tool_input = {"command": "echo " + "x" * 2000}
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        decoded = json.loads(summary)  # 壊れたJSONにならない(本バグの核心)
+        assert decoded[audit.TRUNCATED_MARKER_KEY] is True
+        # 値の一部は残っている(空になっていない)
+        assert decoded["command"].startswith("echo ")
+
+    def test_huge_single_value_shows_most_of_the_budget(self):
+        """レビュー I-2 回帰: 単一の長いコマンドという最頻ケースで、可視文字数が
+        leaf_charsの当て推量(旧: 480→240への半減)で無駄に切り詰められないこと。
+        旧実装(壊れたJSON)は約493文字を見せていた・修正前の二分探索無し版は240文字
+        まで落ち込んでいた。二分探索は実測でこのケースの真の最大値(447文字、
+        summary長は予算ちょうどの500)に到達する。実装の微調整で数文字動く余地を
+        見て440文字以上を最低ラインとして固定する。
+        """
+        command = "echo " + "x" * 2000
+        tool_input = {"command": command}
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        decoded = json.loads(summary)
+        visible = decoded["command"]
+        # visible と元のコマンドの共通接頭辞長 = 切り詰めタグより前に残っている実文字数
+        prefix_len = 0
+        for a, b in zip(visible, command):
+            if a != b:
+                break
+            prefix_len += 1
+        assert prefix_len >= 440, f"visible={prefix_len} chars (summary len={len(summary)})"
+
+    def test_many_keys_are_capped_and_counted(self):
+        tool_input = {f"key{i}": f"value{i}" for i in range(200)}
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        decoded = json.loads(summary)
+        assert decoded[audit.TRUNCATED_MARKER_KEY] is True
+        assert decoded[audit.OMITTED_KEYS_KEY] > 0
+        # 残ったキー数は元のキー数より明らかに少ない
+        kept = [k for k in decoded if not k.startswith("__audit") and k != audit.OMITTED_KEYS_KEY]
+        assert 0 < len(kept) < 200
+
+    def test_deep_nesting_is_bounded(self):
+        nested = "leaf"
+        for _ in range(50):
+            nested = {"child": nested}
+        summary = audit.build_tool_summary({"tree": nested})
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        json.loads(summary)  # 例外を出さずに読めること
+
+    def test_non_string_values_are_preserved_when_small(self):
+        tool_input = {
+            "count": 3,
+            "ratio": 1.5,
+            "flag": True,
+            "missing": None,
+            "items": [1, 2, 3],
+        }
+        summary = audit.build_tool_summary(tool_input)
+        decoded = json.loads(summary)
+        assert decoded["count"] == 3
+        assert decoded["ratio"] == 1.5
+        assert decoded["flag"] is True
+        assert decoded["missing"] is None
+        assert decoded["items"] == [1, 2, 3]
+        assert audit.TRUNCATED_MARKER_KEY not in decoded
+
+    def test_huge_non_string_value_is_bounded_too(self):
+        tool_input = {"big_number": int("9" * 2000)}
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        json.loads(summary)
+
+    def test_int_beyond_str_conversion_limit_does_not_raise(self):
+        """レビュー I-1 回帰: CPythonのint<->str変換上限(既定4300桁、3.11+)を超える整数でも
+        ValueErrorを送出しないこと。トップレベル・dict内・list内のいずれでも再現していた。
+        """
+        huge = 10**5000  # 5001桁 > 既定上限4300桁
+        for tool_input in (huge, {"big": huge}, [huge]):
+            summary = audit.build_tool_summary(tool_input)
+            assert len(summary) <= audit.SUMMARY_MAX_CHARS
+            json.loads(summary)
+
+    def test_negative_int_beyond_str_conversion_limit_does_not_raise(self):
+        summary = audit.build_tool_summary({"big": -(10**5000)})
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        json.loads(summary)
+
+    def test_int_key_beyond_str_conversion_limit_does_not_raise(self):
+        """レビュー I-1 残存分の回帰: _cap_dict のキー変換が値側と同じ安全な経路
+        (_safe_int_str)を通らず素の str() を呼んでいたため、キーが桁数上限超えの
+        intのときも同じ ValueError を送出していた(build_tool_summary({10**5000 - 1:
+        "value"}))。キー側でも例外を出さないことを固定する。
+        """
+        huge_key = 10**5000 - 1  # 5001桁 > 既定上限4300桁
+        summary = audit.build_tool_summary({huge_key: "value"})
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        decoded = json.loads(summary)
+        assert isinstance(decoded, dict)
+        # キーはJSON上つねに文字列化される。プレースホルダー表現が使われていること。
+        assert any("<int ~" in k for k in decoded if isinstance(k, str))
+
+    def test_empty_dict_round_trips_unchanged(self):
+        assert audit.build_tool_summary({}) == "{}"
+
+    def test_missing_tool_input_becomes_empty_object(self):
+        assert audit.build_tool_summary(None) == "{}"
+
+    def test_non_dict_tool_input_string(self):
+        summary = audit.build_tool_summary("plain string")
+        assert json.loads(summary) == "plain string"
+
+    def test_non_dict_tool_input_huge_string(self):
+        summary = audit.build_tool_summary("y" * 3000)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        decoded = json.loads(summary)
+        assert isinstance(decoded, str)
+        assert audit.TRUNCATED_TAG_PREFIX in decoded
+
+    def test_non_dict_tool_input_list(self):
+        tool_input = [{"a": "x" * 2000}] * 300
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        json.loads(summary)
+
+    def test_adversarial_many_huge_keys_falls_back_but_stays_valid(self):
+        """並外れて多い巨大キーでも、最終的にサイズ上限内の妥当なJSONへ収束する。"""
+        tool_input = {("k" * 500 + str(i)): ("v" * 500) for i in range(500)}
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        json.loads(summary)
+
+    def test_escaping_heavy_values_stay_within_budget(self):
+        """バックスラッシュ/引用符だらけの値はエスケープで文字数が倍増し得るが、
+        実測した直列化後の長さで収束させているので上限を超えない。"""
+        tool_input = {f"k{i}": "\\\"" * 300 for i in range(30)}
+        summary = audit.build_tool_summary(tool_input)
+        assert len(summary) <= audit.SUMMARY_MAX_CHARS
+        json.loads(summary)
 
 
 def test_audit_never_crashes_on_unwritable_path(monkeypatch, tmp_path, capsys):
