@@ -83,6 +83,8 @@ git clone https://github.com/wwwcojp/safe-dev-hooks.git
 
 **0.7.0 以降、リポジトリ直下の `.claude-hooks.json` は `~/.claude/claude-hooks.json` の `"trusted_projects"` で承認したときだけ適用されます**(内容ハッシュ / `true` / `false`)。未承認のプロジェクト設定は無視され(解析もされず)、フックが貼り付け可能な承認エントリを印字します — clone しただけでガードが緩んだり設定由来のコマンドが走ったりすることはありません。詳細: [docs/configuration.md](docs/configuration.md) §1。
 
+**0.8.0 以降、この承認は `quality_gate` の自動検出コマンド**(`ruff` / `rustfmt` / `npx eslint`)**の実行可否にも使われます** — `trusted_projects` に登録済みのプロジェクトでのみ実行し、未承認のプロジェクトでは通知だけを出します。詳細: [docs/hooks/quality_gate.md](docs/hooks/quality_gate.md)。
+
 最小例:
 
 ```json
