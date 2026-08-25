@@ -4,8 +4,8 @@
     "hooks/lib/hook_io.py": 98.9,
     "hooks/lib/patterns.py": 95.5,
     "hooks/lib/scanners.py": 99.3,
-    "hooks/lib/trust.py": 98.1,
+    "hooks/lib/trust.py": 98.4,
     "hooks/pre_tool_use/bash_guard.py": 100.0
   },
-  "updated": "2026-08-24T13:18:26Z"
+  "updated": "2026-08-25T15:57:45Z"
 }

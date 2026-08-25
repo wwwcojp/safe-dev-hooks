@@ -561,3 +561,101 @@ def test_is_trusted_except_branch_returns_false(monkeypatch):
         raise RuntimeError("boom")
     monkeypatch.setattr(trust, "classify_entry", boom)
     assert trust.is_trusted("/home/alice/proj", {"/home/alice/proj": True}) is False
+
+
+# --- 自動検出スキップの通知(0.8.0) ---
+
+
+def test_autodetect_skipped_notice_exact_text():
+    assert trust.autodetect_skipped_notice("/home/alice/proj") == (
+        "[safe-dev-hooks] このプロジェクトは未承認のため、quality_gate の自動検出"
+        "(ruff / rustfmt / eslint)を実行しませんでした。\n"
+        "自動検出はプロジェクト同梱の設定ファイルを読み込むため、承認済みの"
+        "プロジェクトでのみ実行します。\n"
+        f"承認する場合は {trust.GLOBAL_CONFIG_HINT} の\n"
+        '"trusted_projects" に次を追加してください:\n'
+        '  "/home/alice/proj": true\n'
+        "承認するとこのプロジェクトの設定ファイル(eslint.config.js など)が"
+        "実行時に読み込まれます。"
+    )
+
+
+def test_notify_autodetect_skipped_first_call_notifies(tmp_path):
+    out = trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=1000.0, state_path=tmp_path / "s.json"
+    )
+    assert len(out) == 1 and "未承認のため" in out[0]
+    assert "/home/alice/proj" in out[0]
+    state = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
+    assert state["autodetect_last"] == {"/home/alice/proj": 1000.0}
+
+
+def test_notify_autodetect_skipped_cooldown_suppresses_then_expires(tmp_path):
+    sp = tmp_path / "s.json"
+    trust.notify_autodetect_skipped("/home/alice/proj", 100, now=1000.0, state_path=sp)
+    assert trust.notify_autodetect_skipped(
+        "/home/alice/proj", 100, now=1050.0, state_path=sp
+    ) == []
+    assert len(
+        trust.notify_autodetect_skipped("/home/alice/proj", 100, now=1101.0, state_path=sp)
+    ) == 1
+
+
+def test_notify_autodetect_skipped_zero_cooldown_notifies_every_time(tmp_path):
+    sp = tmp_path / "s.json"
+    for now in (1000.0, 1000.0, 1000.0):
+        assert len(
+            trust.notify_autodetect_skipped("/home/alice/proj", 0, now=now, state_path=sp)
+        ) == 1
+
+
+def test_notify_autodetect_skipped_notifies_when_state_unusable(tmp_path):
+    unusable = tmp_path / "dir-not-file"
+    unusable.mkdir()
+    for _ in range(3):
+        assert len(
+            trust.notify_autodetect_skipped(
+                "/home/alice/proj", 3600, now=1000.0, state_path=unusable
+            )
+        ) == 1
+
+
+def test_notify_autodetect_skipped_notifies_when_state_broken(tmp_path):
+    # load_state が None を返す(壊れた JSON)場合の `state = {}` への復帰を固定する。
+    # ディレクトリを渡す既存テストは load_state が {} を返す(is_file() が False)ため
+    # 読み側の None 分岐は通らない — 壊れた JSON でのみ None 分岐へ到達する。
+    broken = tmp_path / "s.json"
+    broken.write_text("{broken", encoding="utf-8")
+    assert len(
+        trust.notify_autodetect_skipped("/home/alice/proj", 3600, now=1.0, state_path=broken)
+    ) == 1
+    # 上書き成功後は抑制される(state = {} からの復帰が正しく効いている証拠)
+    assert trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=2.0, state_path=broken
+    ) == []
+
+
+def test_notify_autodetect_skipped_uses_separate_section_from_skipped_last(tmp_path):
+    sp = tmp_path / "s.json"
+    trust.notify_skipped("/home/alice/a", "/home/alice/b", 3600, now=1000.0, state_path=sp)
+    # 別セクションなので自動検出の通知は抑止されない
+    assert len(
+        trust.notify_autodetect_skipped("/home/alice/a", 3600, now=1000.0, state_path=sp)
+    ) == 1
+
+
+def test_notify_autodetect_skipped_never_raises(monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(trust, "_notify_autodetect", boom)
+    assert trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=1000.0, state_path=tmp_path / "s.json"
+    ) == []
+
+
+def test_notify_autodetect_skipped_uses_wall_clock_when_now_omitted(monkeypatch, tmp_path):
+    monkeypatch.setattr(trust.time, "time", lambda: 4242.0)
+    trust.notify_autodetect_skipped("/home/alice/proj", 3600, state_path=tmp_path / "s.json")
+    state = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
+    assert state["autodetect_last"]["/home/alice/proj"] == 4242.0

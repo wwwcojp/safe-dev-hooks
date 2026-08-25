@@ -303,6 +303,72 @@ def notify_rejected_env(
     return _notify_once(env_dir, root, cooldown_sec, rejected_env_notice, now, state_path)
 
 
+# --- 自動検出スキップの通知(0.8.0) ---
+
+
+def autodetect_skipped_notice(key: str) -> str:
+    """未承認のため quality_gate の自動検出を実行しなかったことを知らせる通知文を返す。
+
+    自動検出は `ruff`/`rustfmt`/`npx eslint` を起動し、それらはプロジェクト同梱の設定
+    (`eslint.config.js` は JavaScript として評価される)を読む。承認前のリポジトリで
+    これを走らせるのは「未承認の設定は採用しない」という 0.7.0 の原則に反するため、
+    承認済みプロジェクトに限定する(0.8.0)。
+    """
+    return (
+        "[safe-dev-hooks] このプロジェクトは未承認のため、quality_gate の自動検出"
+        "(ruff / rustfmt / eslint)を実行しませんでした。\n"
+        "自動検出はプロジェクト同梱の設定ファイルを読み込むため、承認済みの"
+        "プロジェクトでのみ実行します。\n"
+        f"承認する場合は {GLOBAL_CONFIG_HINT} の\n"
+        '"trusted_projects" に次を追加してください:\n'
+        f'  "{key}": true\n'
+        "承認するとこのプロジェクトの設定ファイル(eslint.config.js など)が"
+        "実行時に読み込まれます。"
+    )
+
+
+def notify_autodetect_skipped(
+    root: str,
+    cooldown_sec: int,
+    *,
+    now: float | None = None,
+    state_path: Path | None = None,
+) -> list[str]:
+    """未承認のため自動検出をスキップしたことをクールダウン付きで通知する(0.8.0)。
+
+    状態は `skipped_last` と分ける — あちらは「読まなかった設定ファイル」、こちらは
+    「実行しなかった自動検出」で、利用者が取るべき行動も違う。枠を共有すると片方が
+    もう片方を抑止してしまう。
+    ここでの try/except は最後の砦(呼び出し元の quality_gate を落とさない)。
+    """
+    try:
+        return _notify_autodetect(root, cooldown_sec, now=now, state_path=state_path)
+    except Exception:
+        return []
+
+
+def _notify_autodetect(
+    root: str,
+    cooldown_sec: int,
+    *,
+    now: float | None = None,
+    state_path: Path | None = None,
+) -> list[str]:
+    # 状態ファイルが使えなければ通知する側に倒す(可視性優先)
+    cooldown_sec = cooldown_seconds(cooldown_sec)
+    key = project_key(root)
+    now = time.time() if now is None else now
+    state = load_state(state_path)
+    if state is None:
+        state = {}
+    last = _section(state, "autodetect_last").get(key)
+    if isinstance(last, (int, float)) and not isinstance(last, bool) and now - last < cooldown_sec:
+        return []
+    state["autodetect_last"][key] = now
+    save_state(state, state_path)
+    return [autodetect_skipped_notice(key)]
+
+
 def _notify_once(skipped_dir, root, cooldown_sec, build, now, state_path) -> list[str]:
     """読まなかった設定の通知をクールダウン付きで 1 件返す共通経路。
 
