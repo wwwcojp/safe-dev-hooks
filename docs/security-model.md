@@ -67,7 +67,7 @@
 
 ## 6. 監査ログの機微情報
 
-`audit_log` は `tool_input` をJSON文字列化し**先頭500文字**を `tool_summary` として記録する。この500文字の中には、実行されたコマンドや編集内容の一部としてシークレット・PIIがそのまま残り得る。
+`audit_log` は `tool_input` を構造保存トランケーション([docs/hooks/audit_log.md](hooks/audit_log.md)参照)で `SUMMARY_MAX_CHARS`(500文字)以内に切り詰め、常に妥当なJSONとして `tool_summary` に記録する。この記録範囲には、実行されたコマンドや編集内容の一部としてシークレット・PIIがそのまま残り得る。
 
 - ログの出力先は既定で `.claude/logs/audit-YYYYMMDD.jsonl`(プロジェクトルート起点の相対パス。0.7.1。基準の決定順序は[docs/configuration.md](configuration.md)参照)。
 - このパスは `.gitignore` により除外済みである(`logs/`、`.claude/logs/`、`*.jsonl`)。したがって**リポジトリへコミットされることは無い**が、**ローカルディスク上には機微情報を含み得るログファイルがそのまま残る**。ログの取り扱い(保存期間・アクセス権限・削除)は利用者側の運用に委ねられる。
