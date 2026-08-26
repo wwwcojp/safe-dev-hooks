@@ -718,6 +718,32 @@ def test_is_trusted_and_is_denied_are_mutually_exclusive():
         assert not (trust.is_trusted(key, {key: value}) and trust.is_denied(key, {key: value}))
 
 
+# --- ピン留めのハッシュ不一致でも「承認済み」判定は保つ(M-2 の裁定を固定) ---
+
+
+def test_is_trusted_true_for_pinned_entry_even_if_hash_no_longer_matches(tmp_path):
+    """`is_trusted` は `.claude-hooks.json` の内容を一切見ない(見てはならない)。
+
+    ピンが担保するのは `.claude-hooks.json` の内容だけで、自動検出が読む設定
+    (`eslint.config.js` / `ruff.toml` / `pyproject.toml`)はどのハッシュにも覆われていない。
+    ハッシュ一致を自動検出の条件にしても実際の脅威は減らず、`.claude-hooks.json` を
+    1 行直すたびに lint が止まって利用者をピン留め解除(`true`)へ誘導するだけになる。
+    """
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".claude-hooks.json").write_text('{"a": 1}', encoding="utf-8")
+    stale = trust.content_hash(b'{"was": "different"}')
+    entries = {os.path.realpath(str(proj)): stale}
+    assert trust.is_trusted(str(proj), entries) is True
+    # 一方で設定そのものは不採用のまま(不一致なので採用せず、警告を出す)
+    verdict = trust.gate(
+        (proj / ".claude-hooks.json").read_bytes(), str(proj), entries, 3600,
+        state_path=tmp_path / "s.json",
+    )
+    assert verdict.adopt is False
+    assert verdict.notices and "承認後に変更されています" in verdict.notices[0]
+
+
 # --- 自動検出スキップ通知: 貼り付け行の一本化(0.8.0 ブランチレビュー I-3) ---
 
 
