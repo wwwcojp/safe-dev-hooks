@@ -795,3 +795,154 @@ def test_main_autodetect_notice_respects_configured_cooldown(monkeypatch, tmp_pa
     second = _run_main(monkeypatch, event, capsys)
     assert "未承認のため" in first["systemMessage"]
     assert "未承認のため" in second["systemMessage"]
+
+
+# --- M-5 再レビュー: 「呼び出し側から観測できない」は等価変異の十分条件ではない ---
+#
+# `docs/superpowers/specs/2026-08-22-mutation-spike-results.md` の教訓どおり、
+# 「常に存在するキーの既定値だから到達しない」という理由づけは、その不変条件を
+# 確立しているのが別関数(`config.load_config`)・別テーブル(`AUTO_DETECT`)・
+# 外部呼び出し(`subprocess.run`)であるかぎり、差し替えれば到達できるので
+# 等価変異ではない。以下はその不変条件を壊して直接固定する契約テスト。
+
+
+def test_main_defaults_enabled_true_and_mode_block_when_section_missing(
+    monkeypatch, tmp_path, capsys
+):
+    """`cfg_all.get("quality_gate", ...)` と `cfg.get("enabled"/"mode", ...)` の
+    既定値は `config.load_config` が確立する不変条件に依存しているだけで、
+    `load_config` 自体を差し替えれば到達できる(=等価変異ではない)。
+
+    quality_gate セクションを丸ごと欠いた `cfg_all` を返させ、それでも
+    (1) 無効化されない(enabled 既定 True)
+    (2) mode 既定は "warn" ではなく "block"(block/warn は利用者可視の挙動差)
+    ことを、実際の decision で固定する。
+    """
+    monkeypatch.setattr(
+        config, "load_config",
+        lambda cwd=None: {"_errors": [], "_project_root": None, "_project_trusted": False},
+    )
+    monkeypatch.setattr(qg, "resolve_commands", lambda *a, **k: ["false"])
+    monkeypatch.setattr(qg, "run_checks", lambda cmds, anchor: ["$ false\nNG"])
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert out["decision"] == "block"
+    assert "NG" in out["reason"]
+
+
+def test_resolve_commands_continues_past_missing_executable_in_next_entry(tmp_path, monkeypatch):
+    """`shutil.which(exe) is None` の `continue` を `break` に変えると、後続の
+    互いに素でない AUTO_DETECT エントリまで打ち切ってしまう。現在の表(拡張子が
+    互いに素)ではこの差は観測できないので、同じ拡張子で実行ファイルの有無だけが
+    違う2エントリの表に差し替えて可視化する。
+    """
+    monkeypatch.setattr(qg, "AUTO_DETECT", [
+        ("*.py", "missing-tool-xyz", ("marker",), "missing-tool-xyz {file}"),
+        ("*.py", "real-tool-xyz", ("marker",), "real-tool-xyz {file}"),
+    ])
+    monkeypatch.setattr(
+        qg.shutil, "which",
+        lambda exe: "/usr/bin/real-tool-xyz" if exe == "real-tool-xyz" else None,
+    )
+    (tmp_path / "marker").write_text("", encoding="utf-8")
+    got = qg.resolve_commands(str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path), trusted=True)
+    assert got and got[0].startswith("real-tool-xyz")
+
+
+def test_resolve_commands_continues_past_missing_marker_in_next_entry(tmp_path, monkeypatch):
+    """前提設定ファイル不在時の `continue` を `break` に変えても同様に打ち切ってしまう。"""
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(qg, "AUTO_DETECT", [
+        ("*.py", "tool-a", ("missing-marker-only",), "tool-a {file}"),
+        ("*.py", "tool-b", ("present-marker",), "tool-b {file}"),
+    ])
+    (tmp_path / "present-marker").write_text("", encoding="utf-8")
+    got = qg.resolve_commands(str(tmp_path / "a.py"), {"commands": {}}, str(tmp_path), trusted=True)
+    assert got and got[0].startswith("tool-b")
+
+
+def test_run_checks_passes_exact_subprocess_kwargs(tmp_path):
+    """`subprocess.run` の全 kwargs(`cwd`/`capture_output`/`text`/`timeout`)を
+    スタブで捕捉し厳密一致で固定する。「呼び出し先の引数」は同一関数内で完結しない
+    ので、値の変異(`text=False`)も kwargs 自体の欠落も両方この1本で kill できる。
+    """
+    seen = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return _Completed()
+
+    with mock.patch.object(qg.subprocess, "run", fake_run):
+        qg.run_checks(["echo hi"], str(tmp_path))
+    assert seen["kwargs"] == {
+        "cwd": str(tmp_path),
+        "capture_output": True,
+        "text": True,
+        "timeout": qg.COMMAND_TIMEOUT_SEC,
+    }
+
+
+def test_run_checks_truncates_output_to_exactly_output_tail_chars(tmp_path):
+    """`[-OUTPUT_TAIL_CHARS:]` を削除・符号反転する変異を、末尾長そのものの検査で固定する。"""
+    long_output = "A" * 3000 + "TAIL_END_MARKER"
+
+    class _Completed:
+        returncode = 1
+        stdout = long_output
+        stderr = ""
+
+    with mock.patch.object(qg.subprocess, "run", lambda *a, **k: _Completed()):
+        failures = qg.run_checks(["fakecmd"], str(tmp_path))
+    assert len(failures) == 1
+    tail = failures[0].split("\n", 1)[1]
+    assert tail == long_output[-qg.OUTPUT_TAIL_CHARS:]
+    assert len(tail) == qg.OUTPUT_TAIL_CHARS
+    assert "TAIL_END_MARKER" in tail
+
+
+def test_main_joins_multiple_autodetect_notices_with_real_newline(monkeypatch, tmp_path, capsys):
+    """`msg = "\n".join(notices)` の区切り文字変異は、`trust.notify_autodetect_skipped` が
+    現行実装では常に0/1件しか返さない契約に隠れて観測できない。その契約を作っているのは
+    `main` 自身ではなく呼び出し先(callee)なので、差し替えれば到達できる(=等価変異ではない)。
+    """
+    root = _make_repo(tmp_path / "root", marker="pyproject.toml", body="[project]\nname='x'\n")
+    target = root / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(qg.trust, "notify_autodetect_skipped", lambda *a, **k: ["one", "two"])
+    event = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert out["systemMessage"] == "one\ntwo"
+
+
+def test_run_checks_records_real_exception_message_and_continues(tmp_path):
+    """例外発生時の `failures.append(...)` 内容と、その後の `continue`(vs `break`)を
+    同時に固定する。1本目が例外・2本目が成功以外の失敗、という2コマンドで両方を可視化する。
+    """
+    calls = []
+
+    class _Failed:
+        returncode = 1
+        stdout = "second command failed"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if len(calls) == 1:
+            raise OSError("boom-message")
+        return _Failed()
+
+    with mock.patch.object(qg.subprocess, "run", fake_run):
+        failures = qg.run_checks(["cmd-one", "cmd-two"], str(tmp_path))
+    assert len(failures) == 2
+    assert "実行できませんでした: boom-message" in failures[0]
+    assert "second command failed" in failures[1]
