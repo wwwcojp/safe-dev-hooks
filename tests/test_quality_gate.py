@@ -462,3 +462,43 @@ def test_in_trusted_scope_true_when_root_itself_has_git(tmp_path):
     sub = root / "a" / "b"
     sub.mkdir(parents=True)
     assert qg._in_trusted_scope(str(sub / "app.py"), str(root)) is True
+
+
+# --- submodule 相当の境界(0.8.0 レビュー ラウンド2 追記) ---
+# git submodule の `.git` はディレクトリでなくファイル(`gitdir: ...` を指す)である。
+# `_crosses_nested_repo` は `.exists()` で判定するため file/dir を区別しないはずだが、
+# それを単体レベルと黒箱レベルの両方で固定する(既存はディレクトリの `.git` しか
+# 使っておらず、file の場合の回帰を検出できなかった)。
+
+
+def test_in_trusted_scope_false_when_git_is_a_file_like_submodule(tmp_path):
+    """submodule 相当: `.git` がディレクトリでなくファイルでも境界として扱う。"""
+    root = tmp_path / "root"
+    sub = root / "vendor" / "sub"
+    sub.mkdir(parents=True)
+    (sub / ".git").write_text("gitdir: ../../.git/modules/sub\n", encoding="utf-8")
+    target = sub / "app.py"
+    assert qg._in_trusted_scope(str(target), str(root)) is False
+
+
+def test_main_submodule_blocks_autodetect_and_emits_no_notice(monkeypatch, tmp_path, capsys):
+    """submodule 回帰(黒箱・両方向固定):承認済み root 配下の submodule
+    (`.git` ファイルを持つディレクトリ)内のファイルを編集しても、(1) 自動検出コマンドは
+    一切起動せず(subprocess.run をスパイして確認)、(2) 『未承認のため』の通知も出ない
+    (fail-safe だが無言。docs/security-model.md の既知の限界に明記する挙動)。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", root)
+    sub = root / "vendor" / "sub"
+    sub.mkdir(parents=True)
+    (sub / ".git").write_text("gitdir: ../../.git/modules/sub\n", encoding="utf-8")
+    target = sub / "app.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    spy = mock.Mock(side_effect=AssertionError("submodule内でコマンドを起動してはならない"))
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    spy.assert_not_called()
+    msg = (out or {}).get("systemMessage", "")
+    assert "未承認のため" not in msg
