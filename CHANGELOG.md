@@ -31,7 +31,11 @@
   承認は `.claude-hooks.json` の有無と無関係で、ディレクトリ単位である。既知の限界:
   境界判定は `.git` の有無に依存するため、承認済みプロジェクト内の git submodule は
   自動検出も通知も出ない(無言)一方、`.git` を持たない未承認の vendored サブツリーは
-  引き続き自動検出の対象になる。詳細: [docs/hooks/quality_gate.md](docs/hooks/quality_gate.md)、
+  引き続き自動検出の対象になる。通知の状態管理は `hooks/lib/trust.py` の新セクション
+  `autodetect_last`(状態ファイル `$HOME/.claude/safe-dev-hooks-state.json`)で、
+  `skipped_last` とは枠を共有しない。`trusted_projects` に `false` で登録した
+  プロジェクトにはこの通知を出さない。詳細:
+  [docs/hooks/quality_gate.md](docs/hooks/quality_gate.md)、
   [docs/security-model.md](docs/security-model.md) §2・§4。
 
 ## [0.7.2] - 2026-08-25
