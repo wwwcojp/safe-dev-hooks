@@ -56,20 +56,8 @@ def test_run_checks_passes(tmp_path):
 # ---- プロジェクトルートの基準差し替え(project_root) ----
 
 
-def test_autodetect_finds_marker_from_project_root_in_subdirectory(tmp_path, monkeypatch):
-    """回帰: cwd がサブディレクトリでもプロジェクトルートのマーカーファイルで検出する。"""
-    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
-    root = tmp_path / "root"
-    (root / ".git").mkdir(parents=True)
-    (root / "pyproject.toml").write_text("", encoding="utf-8")
-    sub = root / "a" / "b"
-    sub.mkdir(parents=True)
-    got = qg.resolve_commands(str(sub / "app.py"), {"commands": {}}, str(sub), trusted=True)
-    assert got and got[0].startswith("ruff check")
-
-
 def test_autodetect_ignores_marker_outside_project_root(tmp_path, monkeypatch):
-    """正当な挙動の保持: プロジェクトルート外(無関係な祖先)のマーカーは拾わない。"""
+    """正当な挙動の保持: 渡された基準ディレクトリの外(無関係な祖先)のマーカーは拾わない。"""
     monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
     (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
     root = tmp_path / "root"
@@ -80,25 +68,8 @@ def test_autodetect_ignores_marker_outside_project_root(tmp_path, monkeypatch):
     assert got == []
 
 
-def test_run_checks_executes_in_project_root_not_subdirectory(tmp_path):
-    """D4: 実行ディレクトリもプロジェクトルート基準になる。"""
-    root = tmp_path / "root"
-    (root / ".git").mkdir(parents=True)
-    sub = root / "a" / "b"
-    sub.mkdir(parents=True)
-    stub = tmp_path / "record_cwd.py"
-    stub.write_text(
-        "import os, sys\n"
-        "open(sys.argv[1], 'w', encoding='utf-8').write(os.getcwd())\n",
-        encoding="utf-8",
-    )
-    marker = tmp_path / "cwd-marker.txt"
-    qg.run_checks([f"python3 {stub} {marker}"], str(sub))
-    assert marker.read_text(encoding="utf-8") == os.path.realpath(str(root))
-
-
-def test_run_checks_uses_cwd_when_no_project_root_found(tmp_path):
-    """正当な挙動の保持: git ルートが無ければ従来どおり cwd で実行する。"""
+def test_run_checks_executes_in_given_root(tmp_path):
+    """D4: 実行ディレクトリは呼び出し元が解決した基準ディレクトリそのものになる。"""
     stub = tmp_path / "record_cwd.py"
     stub.write_text(
         "import os, sys\n"
@@ -275,19 +246,50 @@ def test_main_trusted_project_without_markers_emits_no_autodetect_notice(
     assert "未承認のため" not in msg
 
 
+def test_main_subdirectory_cwd_anchors_on_project_root(monkeypatch, tmp_path, capsys):
+    """D1/D4 回帰: 基準の解決を config へ一本化した後も、サブディレクトリで編集した
+    ファイルはプロジェクトルートのマーカーで検出され、ルートを実行ディレクトリにする。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    target = sub / "app.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", root)
+    seen = {}
+    monkeypatch.setattr(
+        qg, "run_checks", lambda cmds, anchor: seen.update(cmds=cmds, anchor=anchor) or []
+    )
+    event = {"tool_name": "Write", "cwd": str(sub), "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    assert seen["cmds"] == [f"ruff check {shlex.quote(str(target))}"]
+    assert seen["anchor"] == str(root)
+
+
 # --- レビュー ラウンド1 修正の回帰(0.8.0) ---
 
 
-def test_main_cwd_non_str_fails_open(monkeypatch, tmp_path, capsys):
-    """I1 回帰: cwd が str でなくても fail_open(exit 0, systemMessage)で終わる(traceback で
-    exit 1 になってはならない)。"""
+def test_main_cwd_non_str_degrades_visibly_without_crashing(monkeypatch, tmp_path, capsys):
+    """I1 回帰: cwd が str でなくても exit 0 と可視のメッセージで終わる(traceback で
+    exit 1 になってはならない)。
+
+    ブランチレビュー I-1 の修正で基準ディレクトリの解決が `config.load_config` の 1 か所に
+    まとまったため、この型不正は load_config の fail-safe(既定値へ縮退 + `_errors`)が
+    吸収する。文面は fail_open ではなく設定エラー通知になるが、守るべき契約
+    (exit 0・可視・自動検出を走らせない)は同じ。
+    """
     target = tmp_path / "a.py"
     target.write_text("x = 1\n", encoding="utf-8")
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("cwd が不正なときに外部コマンドを起動してはならない")
+    ))
     event = {"tool_name": "Write", "cwd": 123, "tool_input": {"file_path": str(target)}}
     out = _run_main(monkeypatch, event, capsys)
     assert out is not None
-    assert "異常終了" in out["systemMessage"]
+    assert "既定値" in out["systemMessage"] or "異常終了" in out["systemMessage"]
+    assert "Traceback" not in json.dumps(out)
 
 
 def test_main_cwd_null_does_not_crash(monkeypatch, tmp_path, capsys):
@@ -502,3 +504,148 @@ def test_main_submodule_blocks_autodetect_and_emits_no_notice(monkeypatch, tmp_p
     spy.assert_not_called()
     msg = (out or {}).get("systemMessage", "")
     assert "未承認のため" not in msg
+
+
+# --- 最終ブランチレビュー(0.8.0)の修正の回帰 ---
+
+
+def _make_repo(path, marker="package.json", body="{}"):
+    (path / ".git").mkdir(parents=True)
+    (path / marker).write_text(body, encoding="utf-8")
+    return path
+
+
+def test_main_missing_cwd_does_not_lint_outside_env_root(monkeypatch, tmp_path, capsys):
+    """I-1 回帰: event に cwd キーが無いとき、承認キー(config が使った基準)とアンカーが
+    分岐して、承認済みプロジェクトの名義で未承認クローンのファイルを lint してはならない。
+
+    `CLAUDE_PROJECT_DIR` は承認済み P を指すが、フックプロセスの cwd は未承認クローン U。
+    0.7.2 の祖先制約は比較対象の cwd が無いと働かないため、config 側の基準は検証されない
+    まま P になる。main が自分で基準を再計算すると U になり、`_in_trusted_scope` が
+    U 基準で評価されて `npx eslint U/evil.js` が起動していた。
+    """
+    approved = _make_repo(tmp_path / "P")
+    untrusted = _make_repo(tmp_path / "U")
+    target = untrusted / "evil.js"
+    target.write_text("const x = 1\n", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", approved)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(approved))
+    monkeypatch.chdir(untrusted)
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    spy = mock.Mock(side_effect=AssertionError("未承認クローンでコマンドを起動してはならない"))
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    spy.assert_not_called()
+
+
+def test_main_null_cwd_does_not_lint_outside_env_root(monkeypatch, tmp_path, capsys):
+    """I-1 回帰: `cwd: null` でも同じ(欠落と null は同じ経路に落ちる)。"""
+    approved = _make_repo(tmp_path / "P")
+    untrusted = _make_repo(tmp_path / "U")
+    target = untrusted / "evil.js"
+    target.write_text("const x = 1\n", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", approved)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(approved))
+    monkeypatch.chdir(untrusted)
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    spy = mock.Mock(side_effect=AssertionError("未承認クローンでコマンドを起動してはならない"))
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "cwd": None, "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    spy.assert_not_called()
+
+
+def test_main_uses_config_project_root_not_a_recomputed_one(monkeypatch, tmp_path, capsys):
+    """I-1 の構造的な固定: main は `_project_root` をそのまま使い、再計算しない。"""
+    root = _make_repo(tmp_path / "root", marker="pyproject.toml", body="[project]\nname='x'\n")
+    target = root / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", root)
+    real = config.project_root
+    calls = []
+    monkeypatch.setattr(
+        config, "project_root", lambda *a, **k: (calls.append(a), real(*a, **k))[1]
+    )
+    seen = {}
+    monkeypatch.setattr(qg, "run_checks", lambda cmds, anchor: seen.update(anchor=anchor) or [])
+    event = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    # 1 イベントにつき解決は 1 回だけ(以前は config / main / resolve_commands / run_checks で
+    # 最大 3 回。承認キーとアンカーが別々に導出される余地をここで塞ぐ)。
+    assert len(calls) == 1, calls
+    assert seen["anchor"] == str(root)
+
+
+def test_main_denied_project_gets_no_autodetect_notice(monkeypatch, tmp_path, capsys):
+    """I-2 回帰: 明示的に `false`(不承認)にしたプロジェクトには承認を催促しない。
+
+    0.7.0 の `_gate` は `denied` で沈黙する(docs/configuration.md にも明記)。同じ規約を
+    自動検出スキップ通知にも適用する。以前は最も緩い `true` をクールダウンごとに勧めていた。
+    """
+    root = _make_repo(tmp_path / "root", marker="pyproject.toml", body="[project]\nname='x'\n")
+    target = root / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    global_path = tmp_path / "global.json"
+    global_path.write_text(
+        json.dumps({"trusted_projects": {os.path.realpath(str(root)): False}}), encoding="utf-8"
+    )
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    spy = mock.Mock(side_effect=AssertionError("不承認プロジェクトでコマンドを起動してはならない"))
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    spy.assert_not_called()
+    assert out is None or "未承認のため" not in (out.get("systemMessage") or "")
+
+
+def test_main_unregistered_project_still_gets_autodetect_notice(monkeypatch, tmp_path, capsys):
+    """I-2 の逆方向: 未登録(`denied` ではない)は従来どおり通知する。"""
+    root = _make_repo(tmp_path / "root", marker="pyproject.toml", body="[project]\nname='x'\n")
+    target = root / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert out is not None and "未承認のため" in out["systemMessage"]
+
+
+def test_main_untrusted_clone_shows_exactly_one_approval_entry(monkeypatch, tmp_path, capsys):
+    """I-3 回帰: 未承認 clone(`.claude-hooks.json` あり)で貼り付け用の行が 1 本だけになる。
+
+    以前は自動検出通知の `"key": true` と未承認設定通知の `"key": "sha256:…"` が同じ
+    systemMessage に並び、同一キーに矛盾する 2 つの値を提示していた(しかも弱い方が先)。
+    """
+    root = _make_repo(tmp_path / "root", marker="pyproject.toml", body="[project]\nname='x'\n")
+    (root / ".claude-hooks.json").write_text(
+        json.dumps({"quality_gate": {"mode": "warn"}}), encoding="utf-8"
+    )
+    target = root / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    msg = out["systemMessage"]
+    key = os.path.realpath(str(root))
+    paste_lines = [ln for ln in msg.splitlines() if ln.startswith(f'  "{key}": ')]
+    assert len(paste_lines) == 1, msg
+    assert paste_lines[0].startswith(f'  "{key}": "sha256:')
+    assert f'"{key}": true' not in msg
+    # 自動検出をスキップした事実自体は残す(理由が消えてはならない)
+    assert "未承認のため" in msg
+
+
+def test_main_untrusted_without_config_file_still_offers_true(monkeypatch, tmp_path, capsys):
+    """I-3 の逆方向: `.claude-hooks.json` が無ければピン留めする内容が存在しないので、
+    従来どおり `true` の貼り付け行を出す(唯一の指示なので矛盾しない)。"""
+    root = _make_repo(tmp_path / "root", marker="pyproject.toml", body="[project]\nname='x'\n")
+    target = root / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(root), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    key = os.path.realpath(str(root))
+    assert f'  "{key}": true' in out["systemMessage"]

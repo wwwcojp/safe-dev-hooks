@@ -93,7 +93,14 @@ def would_autodetect(file_path: str, root: str) -> bool:
     )
 
 
-def resolve_commands(file_path: str, cfg: dict, cwd: str, *, trusted: bool) -> list:
+def resolve_commands(file_path: str, cfg: dict, root: str, *, trusted: bool) -> list:
+    """`root` は `config.load_config` が承認判定に使った基準ディレクトリ(呼び出し元が渡す)。
+
+    ここで `config.project_root` を再計算しない(0.8.0 ブランチレビュー I-1)。
+    event["cwd"] はBashのcdに追従する一時的な値なので基準にできない(D1)が、その解決は
+    設定の読み込みと同じ 1 か所で済ませ、「承認したディレクトリ」と「自動検出の起点」を
+    構造的に同じ値にする。
+    """
     name = Path(file_path).name
     quoted = shlex.quote(file_path)
     commands = []
@@ -107,9 +114,6 @@ def resolve_commands(file_path: str, cfg: dict, cwd: str, *, trusted: bool) -> l
     # 利用者が明示した commands は 0.7.0 の信頼ゲートを既に通っているため対象外。
     if not trusted:
         return []
-    # event["cwd"] はBashのcdに追従する一時的な値なので基準にできない(D1と同じ理由)。
-    # config.project_root で解決したプロジェクトルート基準に前提設定ファイルを探す。
-    root = config.project_root(cwd) or cwd
     # I2: 承認は root に対するものであり、file_path が root の実境界の外(別クローン・
     # ネストした別リポジトリ)にあるなら、その承認を自動検出の根拠にしない。
     if not _in_trusted_scope(file_path, root):
@@ -125,9 +129,11 @@ def resolve_commands(file_path: str, cfg: dict, cwd: str, *, trusted: bool) -> l
     return commands
 
 
-def run_checks(commands: list, cwd: str) -> list:
-    # D4: 実行ディレクトリもプロジェクトルート基準にする(マーカー探索と同じ基準に揃える)。
-    root = config.project_root(cwd) or cwd
+def run_checks(commands: list, root: str) -> list:
+    """D4: 実行ディレクトリもプロジェクトルート基準にする(マーカー探索と同じ基準)。
+
+    `root` は呼び出し元が解決済みの基準ディレクトリ。ここでも再解決はしない(I-1)。
+    """
     failures = []
     for cmd in commands:
         try:
@@ -157,14 +163,31 @@ def main() -> None:
     if not file_path or not Path(file_path).is_file():
         hook_io.finalize(None, cfg_all)
     try:
-        # I1: root/trusted の算出も try の内側に置く。config.project_root は cwd が
-        # str でないと TypeError を送出し得る(event["cwd"] はハーネス由来だが、
-        # フックのクラッシュは fail-open が既存の全体制約のため、ここも例外を漏らさない)。
-        root = config.project_root(cwd) or cwd
-        trusted = bool(cfg_all.get("_project_trusted"))
-        commands = resolve_commands(file_path, cfg, root, trusted=trusted)
-        skipped = not commands and not trusted and would_autodetect(file_path, root)
-        failures = run_checks(commands, root) if commands else []
+        # I-1(0.8.0 ブランチレビュー): 基準ディレクトリは config.load_config が承認判定に
+        # 使った値(`_project_root`)をそのまま受け取り、ここで再計算しない。再計算すると
+        # event["cwd"] が欠落/None のときだけ、承認キー(検証を通していない
+        # CLAUDE_PROJECT_DIR)とアンカー(フックプロセス自身の cwd)が分岐し、承認済み
+        # プロジェクトの名義で未承認クローンのファイルを lint してしまう。
+        # 未承認・解決不能(None)のときは自動検出を一切行わない。
+        root = cfg_all.get("_project_root")
+        trusted = bool(cfg_all.get("_project_trusted")) and root is not None
+        anchor = root or cwd
+        commands = resolve_commands(file_path, cfg, anchor, trusted=trusted)
+        # I-2: 明示的に `false` にしたプロジェクトへ承認を催促しない(0.7.0 の `_gate` が
+        # `denied` で沈黙するのと同じ規約。利用者はすでに「いいえ」と答えている)。
+        skipped = (
+            root is not None
+            and not commands
+            and not trusted
+            and not trust.is_denied(root, cfg_all.get("trusted_projects"))
+            and would_autodetect(file_path, root)
+        )
+        # I-3: 同じキーに対する貼り付け行が 2 つ並ばないようにするための材料。
+        # `.claude-hooks.json` があれば未承認設定の通知がピン留め形式のエントリを出す。
+        config_present = skipped and os.path.isfile(
+            os.path.join(root, config.PROJECT_CONFIG_NAME)
+        )
+        failures = run_checks(commands, anchor) if commands else []
     except Exception as exc:
         hook_io.fail_open("quality_gate", exc)
         return
@@ -185,6 +208,7 @@ def main() -> None:
     if skipped:
         notices = trust.notify_autodetect_skipped(
             root, trust.cooldown_seconds(cfg_all.get("notice_cooldown_sec")),
+            config_present=config_present,
         )
         if notices:
             out = dict(out or {})
