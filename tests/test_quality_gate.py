@@ -81,10 +81,11 @@ def test_run_checks_executes_in_given_root(tmp_path):
     assert marker.read_text(encoding="utf-8") == os.path.realpath(str(tmp_path))
 
 
-def _run_main(monkeypatch, event, capsys):
+def _run_main(monkeypatch, event, capsys, expect_code=0):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as excinfo:
         qg.main()
+    assert excinfo.value.code == expect_code
     out = capsys.readouterr().out.strip()
     return json.loads(out) if out else None
 
@@ -100,6 +101,8 @@ def test_main_block_mode(monkeypatch, tmp_path, capsys):
     event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(bad)}}
     out = _run_main(monkeypatch, event, capsys)
     assert out["decision"] == "block"
+    assert out["reason"].startswith("品質チェックが失敗しました。修正してください:\n")
+    assert "py_compile" in out["reason"]
 
 
 def test_main_warn_mode(monkeypatch, tmp_path, capsys):
@@ -116,16 +119,54 @@ def test_main_warn_mode(monkeypatch, tmp_path, capsys):
     event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(bad)}}
     out = _run_main(monkeypatch, event, capsys)
     assert "decision" not in out
-    assert "additionalContext" in out["hookSpecificOutput"]
+    assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+    assert out["hookSpecificOutput"]["additionalContext"].startswith(
+        "[safe-dev-hooks] 品質チェック警告:\n"
+    )
 
 
 def test_main_skips_missing_file(monkeypatch, tmp_path, capsys):
+    # マーカーのある未承認プロジェクトにしておく = 先へ進んでしまえば通知が出る形。
+    # 「存在しないファイルなら何もしない」が空パスの場合と独立に効くことを固定する。
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
     monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
     event = {
         "tool_name": "Write", "cwd": str(tmp_path),
         "tool_input": {"file_path": str(tmp_path / "gone.py")},
     }
     assert _run_main(monkeypatch, event, capsys) is None
+
+
+def test_main_skips_empty_file_path(monkeypatch, tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": ""}}
+    assert _run_main(monkeypatch, event, capsys) is None
+
+
+def test_main_ignores_non_write_tools(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    event = {"tool_name": "Read", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    assert _run_main(monkeypatch, event, capsys) is None
+
+
+def test_main_disabled_by_config_does_nothing(monkeypatch, tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    approve_project(
+        monkeypatch, tmp_path / "global.json", tmp_path,
+        global_cfg={"quality_gate": {"enabled": False}},
+    )
+    spy = mock.Mock(side_effect=AssertionError("無効化中にコマンドを起動してはならない"))
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    assert _run_main(monkeypatch, event, capsys) is None
+    spy.assert_not_called()
 
 
 # --- 自動検出は承認済みプロジェクトでのみ実行する(0.8.0) ---
@@ -649,3 +690,108 @@ def test_main_untrusted_without_config_file_still_offers_true(monkeypatch, tmp_p
     out = _run_main(monkeypatch, event, capsys)
     key = os.path.realpath(str(root))
     assert f'  "{key}": true' in out["systemMessage"]
+
+
+# --- 信頼境界の変異ラチェット向けの契約テスト(M-5) ---
+
+
+def test_resolve_commands_accumulates_all_matching_patterns(tmp_path):
+    """複数の glob が同じファイルに一致したら、全部のコマンドを積む(上書きしない)。"""
+    cfg = {"commands": {"*.py": ["first {file}"], "a*": ["second {file}"]}}
+    got = qg.resolve_commands("a.py", cfg, str(tmp_path), trusted=False)
+    assert sorted(got) == ["first a.py", "second a.py"]
+
+
+@pytest.mark.parametrize("name", ["a.js", "a.jsx", "a.ts", "a.tsx"])
+def test_resolve_commands_autodetect_matches_each_alternate_extension(tmp_path, monkeypatch, name):
+    """`|` 区切りの複数拡張子がすべて一致する(区切りを落とすと 1 つも一致しない)。
+
+    併せて、AUTO_DETECT の走査が先頭エントリ(`*.py`)の不一致で打ち切られないことも固定する。
+    """
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    got = qg.resolve_commands(name, {"commands": {}}, str(tmp_path), trusted=True)
+    assert got == [f"npx --no-install eslint {name}"]
+
+
+@pytest.mark.parametrize("name", ["a.js", "a.jsx", "a.ts", "a.tsx"])
+def test_would_autodetect_matches_each_alternate_extension(tmp_path, monkeypatch, name):
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+    assert qg.would_autodetect(name, str(tmp_path)) is True
+
+
+def test_crosses_nested_repo_true_when_walk_reaches_filesystem_root(tmp_path):
+    """root へ到達せずファイルシステムの根まで遡ったら「境界を越えた」と扱う(安全側)。
+
+    root_r が file_dir の祖先でないときに呼ばれると起きる。ここで False に倒すと
+    無限ループか、承認外ディレクトリを承認済みとして扱うかのどちらかになる。
+    """
+    assert qg._crosses_nested_repo(str(tmp_path), str(tmp_path / "not-an-ancestor")) is True
+
+
+def test_crosses_nested_repo_true_when_stat_raises(tmp_path, monkeypatch):
+    """`.git` の存在確認が OSError(権限等)になったら安全側(境界あり)に倒す。"""
+    class _Boom:
+        def __truediv__(self, other):
+            raise OSError("boom")
+
+    monkeypatch.setattr(qg, "Path", lambda *a, **k: _Boom())
+    assert qg._crosses_nested_repo("/a/b", "/a") is True
+
+
+def test_in_trusted_scope_false_when_realpath_raises(monkeypatch):
+    """realpath が OSError を出したら安全側(境界外)に倒す。"""
+    def boom(_path):
+        raise OSError("boom")
+
+    monkeypatch.setattr(qg.os.path, "realpath", boom)
+    assert qg._in_trusted_scope("/a/b/app.py", "/a/b") is False
+
+
+def test_main_reports_every_failing_command_separated(monkeypatch, tmp_path, capsys):
+    """複数コマンドが失敗したら全部を空行区切りで提示する(1 本目で上書きしない)。"""
+    (tmp_path / ".claude-hooks.json").write_text(
+        json.dumps({"quality_gate": {"commands": {"*.py": ["false one", "false two"]}}}),
+        encoding="utf-8",
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(qg, "run_checks", lambda cmds, anchor: ["$ one\nNG1", "$ two\nNG2"])
+    event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert "$ one\nNG1\n\n$ two\nNG2" in out["reason"]
+
+
+def test_main_fail_open_names_the_hook_and_the_exception(monkeypatch, tmp_path, capsys):
+    """try の内側で想定外の例外が出たら fail-open。フック名と例外を必ず可視化する。"""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path)
+
+    def boom(*a, **k):
+        raise RuntimeError("設計外の異常")
+
+    monkeypatch.setattr(qg, "resolve_commands", boom)
+    event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert "quality_gate が異常終了したため検査をスキップしました" in out["systemMessage"]
+    assert "設計外の異常" in out["systemMessage"]
+
+
+def test_main_autodetect_notice_respects_configured_cooldown(monkeypatch, tmp_path, capsys):
+    """`notice_cooldown_sec` が自動検出通知にも効く(既定値へ読み替えない)。"""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    global_path = tmp_path / "global.json"
+    global_path.write_text(json.dumps({"notice_cooldown_sec": 0}), encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(tmp_path), "tool_input": {"file_path": str(target)}}
+    first = _run_main(monkeypatch, event, capsys)
+    second = _run_main(monkeypatch, event, capsys)
+    assert "未承認のため" in first["systemMessage"]
+    assert "未承認のため" in second["systemMessage"]

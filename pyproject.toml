@@ -28,7 +28,7 @@ source_paths = ["hooks"]
 only_mutate = [
   "hooks/lib/patterns.py", "hooks/lib/hook_io.py", "hooks/lib/scanners.py", "hooks/lib/config.py",
   "hooks/lib/trust.py",
-  "hooks/pre_tool_use/bash_guard.py",
+  "hooks/pre_tool_use/bash_guard.py", "hooks/post_tool_use/quality_gate.py",
 ]
 also_copy = [
   "rules", "examples", ".claude-plugin", "scripts", ".github", "docs",
