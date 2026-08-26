@@ -85,6 +85,8 @@ Put project-shared settings in `.claude-hooks.json` at your repo root; personal 
 
 **Since 0.7.0, a repo-level `.claude-hooks.json` is only applied after you approve it** in `~/.claude/claude-hooks.json` (`"trusted_projects"`: content hash, `true`, or `false`). Unapproved project config is ignored (not even parsed) and the hook prints a paste-ready approval entry — so cloning a repository can never weaken your guards or run commands from its config. See [docs/configuration.md](docs/configuration.md) §1.
 
+**Since 0.8.0, the same approval also gates `quality_gate`'s auto-detected lint commands** (`ruff` / `rustfmt` / `npx eslint`) — they only run for projects approved in `trusted_projects` (a `false` entry is listed but not approved); an unapproved project just gets a notice instead. See [docs/hooks/quality_gate.md](docs/hooks/quality_gate.md).
+
 A minimal example:
 
 ```json

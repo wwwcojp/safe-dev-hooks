@@ -81,6 +81,11 @@ git リポジトリでない場所で `CLAUDE_PROJECT_DIR` も未設定の場合
 - `trusted_projects` はグローバル層からのみ読む(プロジェクト層に書いても自己承認にならない)。値が dict でなければ `_errors` に記録され全プロジェクトが非承認になる
 - 通知: 未承認はクールダウン(`notice_cooldown_sec`、`0` で毎回)、ハッシュ不一致は常に、ピン留めなしは変化した回のみ、`false` は出さない。`audit_log` は通知を出さない — **かつクールダウンの枠も消費しない**(`load_config(..., notices=False)`)。`audit_log` は SessionStart と全 PreToolUse/PostToolUse で走る最頻フックであり、表示しないのに枠だけ消費すると以後1時間、対話フック側の通知がまるごと抑止されてしまうため(0.7.1 で修正)
 - 承認判定自体(`hooks/lib/trust.py` の `gate()`)は内部で例外を出さない設計だが、万一の異常時も安全側(不採用)に倒し、`systemMessage` に `safe-dev-hooks: プロジェクト設定の信頼判定に失敗したため無視しました: <例外の型>: <メッセージ>` を印字する([docs/security-model.md](security-model.md) §5 fail-open/fail-close方針)
+- 承認は `.claude-hooks.json` の採用可否だけでなく、`quality_gate` の**自動検出**
+  (`ruff`/`rustfmt`/`npx eslint`)を実行してよいかの判断にも使う(0.8.0)。未承認の
+  プロジェクトでは自動検出を実行せず、通知を出す。`false` で登録したプロジェクトには
+  この通知も出さない(上記「`false` は出さない」と同じ規約)
+  (詳細: [docs/hooks/quality_gate.md](hooks/quality_gate.md))
 
 ### マージの規則
 

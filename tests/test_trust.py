@@ -495,3 +495,297 @@ def test_notify_rejected_env_wrapper_catches_internal_exception(monkeypatch, tmp
 
     monkeypatch.setattr(trust, "_notify_skipped", boom)
     assert _notify_env(state_path=tmp_path / "s.json") == []
+
+
+# --- is_trusted: 承認済みプロジェクトの判定(0.8.0) ---
+
+
+def test_is_trusted_accepts_pinned_and_unpinned():
+    key = "/home/alice/proj"
+    digest = "sha256:" + "a" * 64
+    assert trust.is_trusted(key, {key: digest}) is True
+    assert trust.is_trusted(key, {key: True}) is True
+
+
+def test_is_trusted_rejects_denied_and_unknown():
+    key = "/home/alice/proj"
+    assert trust.is_trusted(key, {key: False}) is False
+    assert trust.is_trusted(key, {}) is False
+    assert trust.is_trusted(key, {"/home/alice/other": True}) is False
+
+
+def test_is_trusted_rejects_malformed_entry_values():
+    key = "/home/alice/proj"
+    for bad in ["sha256:zz", "sha256:" + "a" * 63, "", 0, 1, [], {}, None, 1.5]:
+        assert trust.is_trusted(key, {key: bad}) is False, bad
+
+
+def test_is_trusted_rejects_non_dict_trusted_projects():
+    for bad in [None, [], "x", 0, True]:
+        assert trust.is_trusted("/home/alice/proj", bad) is False, bad
+
+
+def test_is_trusted_returns_false_for_none_root():
+    assert trust.is_trusted(None, {"/home/alice/proj": True}) is False
+
+
+def test_is_trusted_matches_by_realpath(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(proj)
+    entry = {os.path.realpath(str(proj)): True}
+    assert trust.is_trusted(str(link), entry) is True
+
+
+def test_is_trusted_never_raises():
+    class Exploding:
+        def get(self, *a, **k):
+            raise RuntimeError("boom")
+    assert trust.is_trusted("/home/alice/proj", Exploding()) is False
+
+
+def test_is_trusted_short_circuits_on_none_root_before_lookup(monkeypatch):
+    # 呼び出し側からは None,dict どちらの引数でも False にしか見えないため、
+    # `root is None or ...` の短絡自体を白箱で固定する(内部関数を差し替えて分岐を分離)。
+    def fake_project_key(root):
+        return "should-not-be-used"
+    monkeypatch.setattr(trust, "project_key", fake_project_key)
+    assert trust.is_trusted(None, {"should-not-be-used": True}) is False
+
+
+def test_is_trusted_except_branch_returns_false(monkeypatch):
+    # dict 型が確定した後の trusted_projects.get()/classify_entry() は通常経路では
+    # 例外を出さないため、except の「安全側に倒す」契約を白箱で直接固定する。
+    def boom(value):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(trust, "classify_entry", boom)
+    assert trust.is_trusted("/home/alice/proj", {"/home/alice/proj": True}) is False
+
+
+# --- 自動検出スキップの通知(0.8.0) ---
+
+
+def test_autodetect_skipped_notice_exact_text():
+    assert trust.autodetect_skipped_notice("/home/alice/proj") == (
+        "[safe-dev-hooks] このプロジェクトは未承認のため、quality_gate の自動検出"
+        "(ruff / rustfmt / eslint)を実行しませんでした。\n"
+        "自動検出はプロジェクト同梱の設定ファイルを読み込むため、承認済みの"
+        "プロジェクトでのみ実行します。\n"
+        f"承認する場合は {trust.GLOBAL_CONFIG_HINT} の\n"
+        '"trusted_projects" に次を追加してください:\n'
+        '  "/home/alice/proj": true\n'
+        "承認するとこのプロジェクトの設定ファイル(eslint.config.js など)が"
+        "実行時に読み込まれます。"
+    )
+
+
+def test_notify_autodetect_skipped_first_call_notifies(tmp_path):
+    out = trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=1000.0, state_path=tmp_path / "s.json"
+    )
+    assert len(out) == 1 and "未承認のため" in out[0]
+    assert "/home/alice/proj" in out[0]
+    state = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
+    assert state["autodetect_last"] == {"/home/alice/proj": 1000.0}
+
+
+def test_notify_autodetect_skipped_cooldown_suppresses_then_expires(tmp_path):
+    sp = tmp_path / "s.json"
+    trust.notify_autodetect_skipped("/home/alice/proj", 100, now=1000.0, state_path=sp)
+    assert trust.notify_autodetect_skipped(
+        "/home/alice/proj", 100, now=1050.0, state_path=sp
+    ) == []
+    assert len(
+        trust.notify_autodetect_skipped("/home/alice/proj", 100, now=1101.0, state_path=sp)
+    ) == 1
+
+
+def test_notify_autodetect_skipped_zero_cooldown_notifies_every_time(tmp_path):
+    sp = tmp_path / "s.json"
+    for now in (1000.0, 1000.0, 1000.0):
+        assert len(
+            trust.notify_autodetect_skipped("/home/alice/proj", 0, now=now, state_path=sp)
+        ) == 1
+
+
+def test_notify_autodetect_skipped_notifies_when_state_unusable(tmp_path):
+    unusable = tmp_path / "dir-not-file"
+    unusable.mkdir()
+    for _ in range(3):
+        assert len(
+            trust.notify_autodetect_skipped(
+                "/home/alice/proj", 3600, now=1000.0, state_path=unusable
+            )
+        ) == 1
+
+
+def test_notify_autodetect_skipped_notifies_when_state_broken(tmp_path):
+    # load_state が None を返す(壊れた JSON)場合の `state = {}` への復帰を固定する。
+    # ディレクトリを渡す既存テストは load_state が {} を返す(is_file() が False)ため
+    # 読み側の None 分岐は通らない — 壊れた JSON でのみ None 分岐へ到達する。
+    broken = tmp_path / "s.json"
+    broken.write_text("{broken", encoding="utf-8")
+    assert len(
+        trust.notify_autodetect_skipped("/home/alice/proj", 3600, now=1.0, state_path=broken)
+    ) == 1
+    # 上書き成功後は抑制される(state = {} からの復帰が正しく効いている証拠)
+    assert trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=2.0, state_path=broken
+    ) == []
+
+
+def test_notify_autodetect_skipped_uses_separate_section_from_skipped_last(tmp_path):
+    sp = tmp_path / "s.json"
+    trust.notify_skipped("/home/alice/a", "/home/alice/b", 3600, now=1000.0, state_path=sp)
+    # 別セクションなので自動検出の通知は抑止されない
+    assert len(
+        trust.notify_autodetect_skipped("/home/alice/a", 3600, now=1000.0, state_path=sp)
+    ) == 1
+
+
+def test_notify_autodetect_skipped_never_raises(monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(trust, "_notify_autodetect", boom)
+    assert trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=1000.0, state_path=tmp_path / "s.json"
+    ) == []
+
+
+def test_notify_autodetect_skipped_uses_wall_clock_when_now_omitted(monkeypatch, tmp_path):
+    monkeypatch.setattr(trust.time, "time", lambda: 4242.0)
+    trust.notify_autodetect_skipped("/home/alice/proj", 3600, state_path=tmp_path / "s.json")
+    state = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
+    assert state["autodetect_last"]["/home/alice/proj"] == 4242.0
+
+
+# --- is_denied: 明示的な不承認(false)を未登録と区別する(0.8.0 ブランチレビュー I-2) ---
+
+
+def test_is_denied_true_only_for_explicit_false():
+    key = "/home/alice/proj"
+    assert trust.is_denied(key, {key: False}) is True
+    assert trust.is_denied(key, {key: True}) is False
+    assert trust.is_denied(key, {key: "sha256:" + "a" * 64}) is False
+
+
+def test_is_denied_false_for_unregistered_and_malformed():
+    key = "/home/alice/proj"
+    assert trust.is_denied(key, {}) is False
+    assert trust.is_denied(key, {"/home/alice/other": False}) is False
+    for bad in ["sha256:zz", "", 0, [], {}, None, 1.5]:
+        assert trust.is_denied(key, {key: bad}) is False, bad
+
+
+def test_is_denied_false_for_non_dict_and_none_root():
+    for bad in [None, [], "x", 0, True]:
+        assert trust.is_denied("/home/alice/proj", bad) is False, bad
+    assert trust.is_denied(None, {"/home/alice/proj": False}) is False
+
+
+def test_is_denied_matches_by_realpath(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(proj)
+    assert trust.is_denied(str(link), {os.path.realpath(str(proj)): False}) is True
+
+
+def test_is_denied_short_circuits_on_none_root_before_lookup(monkeypatch):
+    monkeypatch.setattr(trust, "project_key", lambda root: "should-not-be-used")
+    assert trust.is_denied(None, {"should-not-be-used": False}) is False
+
+
+def test_is_denied_never_raises():
+    class Exploding:
+        def get(self, *a, **k):
+            raise RuntimeError("boom")
+    assert trust.is_denied("/home/alice/proj", Exploding()) is False
+
+
+def test_is_denied_except_branch_returns_false(monkeypatch):
+    def boom(value):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(trust, "classify_entry", boom)
+    assert trust.is_denied("/home/alice/proj", {"/home/alice/proj": False}) is False
+
+
+def test_is_trusted_and_is_denied_are_mutually_exclusive():
+    key = "/home/alice/proj"
+    for value in [True, False, "sha256:" + "a" * 64, "junk", None, {}]:
+        assert not (trust.is_trusted(key, {key: value}) and trust.is_denied(key, {key: value}))
+
+
+# --- ピン留めのハッシュ不一致でも「承認済み」判定は保つ(M-2 の裁定を固定) ---
+
+
+def test_is_trusted_true_for_pinned_entry_even_if_hash_no_longer_matches(tmp_path):
+    """`is_trusted` は `.claude-hooks.json` の内容を一切見ない(見てはならない)。
+
+    ピンが担保するのは `.claude-hooks.json` の内容だけで、自動検出が読む設定
+    (`eslint.config.js` / `ruff.toml` / `pyproject.toml`)はどのハッシュにも覆われていない。
+    ハッシュ一致を自動検出の条件にしても実際の脅威は減らず、`.claude-hooks.json` を
+    1 行直すたびに lint が止まって利用者をピン留め解除(`true`)へ誘導するだけになる。
+    """
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".claude-hooks.json").write_text('{"a": 1}', encoding="utf-8")
+    stale = trust.content_hash(b'{"was": "different"}')
+    entries = {os.path.realpath(str(proj)): stale}
+    assert trust.is_trusted(str(proj), entries) is True
+    # 一方で設定そのものは不採用のまま(不一致なので採用せず、警告を出す)
+    verdict = trust.gate(
+        (proj / ".claude-hooks.json").read_bytes(), str(proj), entries, 3600,
+        state_path=tmp_path / "s.json",
+    )
+    assert verdict.adopt is False
+    assert verdict.notices and "承認後に変更されています" in verdict.notices[0]
+
+
+# --- 自動検出スキップ通知: 貼り付け行の一本化(0.8.0 ブランチレビュー I-3) ---
+
+
+def test_autodetect_skipped_notice_with_config_present_exact_text():
+    assert trust.autodetect_skipped_notice("/home/alice/proj", config_present=True) == (
+        "[safe-dev-hooks] このプロジェクトは未承認のため、quality_gate の自動検出"
+        "(ruff / rustfmt / eslint)を実行しませんでした。\n"
+        "自動検出はプロジェクト同梱の設定ファイルを読み込むため、承認済みの"
+        "プロジェクトでのみ実行します。\n"
+        "このプロジェクトには .claude-hooks.json があります。承認は"
+        "内容ハッシュでのピン留めで行ってください —\n"
+        '貼り付け用のエントリ("/home/alice/proj": "sha256:…")は、同じキーに対する\n'
+        ".claude-hooks.json の未承認通知に表示されます。\n"
+        "承認するとこのプロジェクトの設定ファイル(eslint.config.js など)が"
+        "実行時に読み込まれます。"
+    )
+
+
+def test_autodetect_skipped_notice_with_config_present_has_no_true_paste_line():
+    text = trust.autodetect_skipped_notice("/home/alice/proj", config_present=True)
+    assert '"/home/alice/proj": true' not in text
+    # 貼り付け行(2 スペース字下げの `  "key": value`)を一切持たない
+    assert [ln for ln in text.splitlines() if ln.startswith('  "')] == []
+
+
+def test_autodetect_skipped_notice_defaults_to_true_paste_line():
+    text = trust.autodetect_skipped_notice("/home/alice/proj")
+    assert '  "/home/alice/proj": true\n' in text
+    assert ".claude-hooks.json があります" not in text
+
+
+def test_notify_autodetect_skipped_passes_config_present_through(tmp_path):
+    out = trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=1000.0, state_path=tmp_path / "s.json",
+        config_present=True,
+    )
+    assert len(out) == 1
+    assert out[0] == trust.autodetect_skipped_notice("/home/alice/proj", config_present=True)
+
+
+def test_notify_autodetect_skipped_default_config_present_is_false(tmp_path):
+    out = trust.notify_autodetect_skipped(
+        "/home/alice/proj", 3600, now=1000.0, state_path=tmp_path / "s.json"
+    )
+    assert out == [trust.autodetect_skipped_notice("/home/alice/proj")]

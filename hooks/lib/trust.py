@@ -52,6 +52,41 @@ def classify_entry(value) -> tuple[str, str | None]:
     return "ignored", None
 
 
+def is_trusted(root: str | None, trusted_projects) -> bool:
+    """root が trusted_projects で承認済みかを返す(0.8.0)。例外を出さない。
+
+    「承認済み」= ピン留め(`"sha256:…"`)またはピン留めなし(`true`)のエントリがあること。
+    `false`(明示的な不承認)・不正な値・未登録は未承認。
+    `.claude-hooks.json` の有無は問わない — 判定しているのは「利用者がこのディレクトリを
+    信頼したか」であり、設定ファイルを採用するかどうか(`gate`)とは別の問いである。
+    敵対的リポジトリは設定ファイルを同梱しなければよいので、設定の採否で代用できない。
+    """
+    if root is None or not isinstance(trusted_projects, dict):
+        return False
+    try:
+        kind, _ = classify_entry(trusted_projects.get(project_key(root)))
+    except Exception:
+        return False
+    return kind in ("pinned", "unpinned")
+
+
+def is_denied(root: str | None, trusted_projects) -> bool:
+    """root が trusted_projects で明示的に不承認(`false`)にされているかを返す。例外を出さない。
+
+    `is_trusted` は「承認済みか」だけを問うので、`false`(明示的な拒否)と未登録・不正値を
+    ひとつの False に畳んでしまう。0.7.0 の `_gate` は `kind == "denied"` のとき意図的に
+    通知を出さない(利用者はすでに「いいえ」と答えている)。同じ規約を 0.8.0 の自動検出
+    スキップ通知にも適用するため、両者を区別できる述語をここに置く。
+    """
+    if root is None or not isinstance(trusted_projects, dict):
+        return False
+    try:
+        kind, _ = classify_entry(trusted_projects.get(project_key(root)))
+    except Exception:
+        return False
+    return kind == "denied"
+
+
 def cooldown_seconds(value) -> int:
     """通知クールダウン秒数を検証する。bool でない 0 以上の int 以外は既定値。"""
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -283,6 +318,98 @@ def notify_rejected_env(
     違うのは文面(=利用者が取るべき行動)だけ。
     """
     return _notify_once(env_dir, root, cooldown_sec, rejected_env_notice, now, state_path)
+
+
+# --- 自動検出スキップの通知(0.8.0) ---
+
+
+def autodetect_skipped_notice(key: str, *, config_present: bool = False) -> str:
+    """未承認のため quality_gate の自動検出を実行しなかったことを知らせる通知文を返す。
+
+    自動検出は `ruff`/`rustfmt`/`npx eslint` を起動し、それらはプロジェクト同梱の設定
+    (`eslint.config.js` は JavaScript として評価される)を読む。承認前のリポジトリで
+    これを走らせるのは「未承認の設定は採用しない」という 0.7.0 の原則に反するため、
+    承認済みプロジェクトに限定する(0.8.0)。
+
+    `config_present=True`(= この基準ディレクトリに `.claude-hooks.json` がある)のときは
+    貼り付け用の `"key": true` を**出さない**(0.8.0 ブランチレビュー I-3)。その場合は
+    `untrusted_notice` が同じキーに対して内容ハッシュのエントリを提示しており、両方を
+    並べると同一キーに 2 つの異なる値が並んで JSON のキー重複になる。しかも先に目に入る
+    のが弱い方(`true` = 将来の内容にも全権)になってしまう。貼り付け行はピン留め側に
+    一本化し、こちらは理由と参照先だけを述べる。
+    """
+    head = (
+        "[safe-dev-hooks] このプロジェクトは未承認のため、quality_gate の自動検出"
+        "(ruff / rustfmt / eslint)を実行しませんでした。\n"
+        "自動検出はプロジェクト同梱の設定ファイルを読み込むため、承認済みの"
+        "プロジェクトでのみ実行します。\n"
+    )
+    tail = (
+        "承認するとこのプロジェクトの設定ファイル(eslint.config.js など)が"
+        "実行時に読み込まれます。"
+    )
+    if config_present:
+        return (
+            head
+            + "このプロジェクトには .claude-hooks.json があります。承認は"
+            "内容ハッシュでのピン留めで行ってください —\n"
+            f'貼り付け用のエントリ("{key}": "sha256:…")は、同じキーに対する\n'
+            ".claude-hooks.json の未承認通知に表示されます。\n"
+            + tail
+        )
+    return (
+        head
+        + f"承認する場合は {GLOBAL_CONFIG_HINT} の\n"
+        '"trusted_projects" に次を追加してください:\n'
+        f'  "{key}": true\n'
+        + tail
+    )
+
+
+def notify_autodetect_skipped(
+    root: str,
+    cooldown_sec: int,
+    *,
+    now: float | None = None,
+    state_path: Path | None = None,
+    config_present: bool = False,
+) -> list[str]:
+    """未承認のため自動検出をスキップしたことをクールダウン付きで通知する(0.8.0)。
+
+    状態は `skipped_last` と分ける — あちらは「読まなかった設定ファイル」、こちらは
+    「実行しなかった自動検出」で、利用者が取るべき行動も違う。枠を共有すると片方が
+    もう片方を抑止してしまう。
+    ここでの try/except は最後の砦(呼び出し元の quality_gate を落とさない)。
+    """
+    try:
+        return _notify_autodetect(
+            root, cooldown_sec, now=now, state_path=state_path, config_present=config_present,
+        )
+    except Exception:
+        return []
+
+
+def _notify_autodetect(
+    root: str,
+    cooldown_sec: int,
+    *,
+    now: float | None = None,
+    state_path: Path | None = None,
+    config_present: bool,
+) -> list[str]:
+    # 状態ファイルが使えなければ通知する側に倒す(可視性優先)
+    cooldown_sec = cooldown_seconds(cooldown_sec)
+    key = project_key(root)
+    now = time.time() if now is None else now
+    state = load_state(state_path)
+    if state is None:
+        state = {}
+    last = _section(state, "autodetect_last").get(key)
+    if isinstance(last, (int, float)) and not isinstance(last, bool) and now - last < cooldown_sec:
+        return []
+    state["autodetect_last"][key] = now
+    save_state(state, state_path)
+    return [autodetect_skipped_notice(key, config_present=config_present)]
 
 
 def _notify_once(skipped_dir, root, cooldown_sec, build, now, state_path) -> list[str]:

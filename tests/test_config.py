@@ -1669,3 +1669,116 @@ def test_load_config_survives_unreadable_ancestor(monkeypatch, tmp_path):
         "設定の読み込みに失敗したため既定値を使用します" not in e for e in cfg["_errors"]
     )
     assert len(cfg["_errors"]) <= 1
+
+
+# --- _project_trusted: 承認済みプロジェクトの判定を設定に載せる(0.8.0) ---
+
+
+def test_project_trusted_true_when_approved(monkeypatch, tmp_path):
+    proj = _proj_with(tmp_path, json.dumps({"quality_gate": {"mode": "warn"}}))
+    approve_project(monkeypatch, tmp_path / "global.json", proj, pinned=True)
+    assert config.load_config(str(proj))["_project_trusted"] is True
+
+
+def test_project_trusted_true_without_project_config_file(monkeypatch, tmp_path):
+    # 設定ファイルが無くても、承認エントリがあれば承認済み(spec D2)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    global_path = tmp_path / "global.json"
+    global_path.write_text(
+        json.dumps({"trusted_projects": {os.path.realpath(str(proj)): True}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    cfg = config.load_config(str(proj))
+    assert cfg["_project_trusted"] is True
+    assert cfg["_notices"] == []
+
+
+def test_project_trusted_false_when_unapproved(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    assert config.load_config(str(proj))["_project_trusted"] is False
+
+
+def test_project_trusted_false_when_denied(monkeypatch, tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    global_path = tmp_path / "global.json"
+    global_path.write_text(
+        json.dumps({"trusted_projects": {os.path.realpath(str(proj)): False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", global_path)
+    assert config.load_config(str(proj))["_project_trusted"] is False
+
+
+def test_project_trusted_present_on_exception_fallback(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(config, "_load_config", boom)
+    cfg = config.load_config("/home/alice/proj")
+    assert cfg["_project_trusted"] is False
+    assert cfg["_notices"] == []
+    assert cfg["_errors"]
+
+
+def test_project_trusted_ignores_project_layer_self_approval(monkeypatch, tmp_path):
+    # プロジェクト設定に自分を承認するエントリを書いても効かない
+    proj = _proj_with(
+        tmp_path,
+        json.dumps({"trusted_projects": {os.path.realpath(str(tmp_path / "proj")): True}}),
+    )
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    assert config.load_config(str(proj))["_project_trusted"] is False
+
+
+# --- _project_root: 承認判定に使った基準ディレクトリを公開する(0.8.0 ブランチレビュー I-1) ---
+
+
+def test_project_root_exposed_matches_project_root_of_cwd(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    cfg = config.load_config(str(sub))
+    assert cfg["_project_root"] == config.project_root(str(sub)) == str(root)
+
+
+def test_project_root_is_the_key_used_for_project_trusted(monkeypatch, tmp_path):
+    """承認キーとアンカーが同じ値であること(I-1 の本質)を直接固定する。"""
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    approve_project(monkeypatch, tmp_path / "global.json", root)
+    cfg = config.load_config(str(sub))
+    assert cfg["_project_trusted"] is True
+    assert trust.is_trusted(cfg["_project_root"], cfg["trusted_projects"]) is True
+
+
+def test_project_root_none_when_cwd_none_and_no_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    assert config.load_config(None)["_project_root"] is None
+
+
+def test_project_root_present_on_exception_fallback(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(config, "_load_config", boom)
+    cfg = config.load_config("/home/alice/proj")
+    assert cfg["_project_root"] is None
+    assert cfg["_project_trusted"] is False
+
+
+def test_project_root_present_on_every_return_path(monkeypatch, tmp_path):
+    """`_project_trusted` と同じく、どの経路でも必ずキーが存在する。"""
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    proj = _proj_with(tmp_path, json.dumps({"quality_gate": {"mode": "warn"}}))
+    for cwd in (str(proj), None, str(tmp_path / "missing")):
+        cfg = config.load_config(cwd)
+        assert "_project_root" in cfg
+    monkeypatch.setattr(config, "_load_config", lambda *a, **k: (_ for _ in ()).throw(ValueError()))
+    assert "_project_root" in config.load_config(str(proj))

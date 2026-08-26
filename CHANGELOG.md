@@ -2,12 +2,42 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
-## [Unreleased]
+## [0.8.0] - 2026-08-26
 
 ### Fixed
 - **`audit_log` の `tool_summary` が、長い `tool_input` で高確率に壊れたJSONになっていた** — 旧実装は `json.dumps(tool_input)[:500]` と直列化後の文字列を単純スライスしていたため、切れ目が文字列リテラルの途中に落ちると `json.loads` できないレコードになっていた。実運用ログ(17日分・3プロジェクト)で計測したところ、Bashレコード13,968件中2,126件(15%)が該当し、すべて500文字ちょうどで頭打ちになっていた(原因はこの単純スライスのみと特定)。監査ログの目的(何が実行されたかの記録)は、パースできないレコードでは果たせない。
   `hooks/audit/audit_log.py` に `build_tool_summary()` を追加し、直列化する**前**に構造(値の長さ・キー/要素数・入れ子の深さ)を切り詰めるよう変更した。これにより `tool_summary` は常に妥当なJSON文字列になり(`SUMMARY_MAX_CHARS = 500` の予算は据え置き)、切り詰めが起きた箇所には `__audit_truncated__`/`__omitted_keys__`/`__omitted_items__`/値末尾の `…[+Nc]` タグを付与して、読者が「全文を見ている」と誤解しないようにした。マーカー形式の詳細は [docs/hooks/audit_log.md](docs/hooks/audit_log.md)。
   `tool_summary` は引き続きJSON文字列を格納する文字列フィールド(オンディスクの形は変更なし)。既存の(0.7.2以前の)ログファイルは遡って直さないため、壊れたレコードはそのまま残る。
+
+### Changed(破壊的変更)
+- **`quality_gate` の自動検出は、編集対象ファイルが承認済みプロジェクトの実境界内にある場合のみ実行するようになった** —
+  `AUTO_DETECT`(`ruff check` / `rustfmt --check` / `npx --no-install eslint`)は、
+  グローバル設定の `trusted_projects` にそのプロジェクトのエントリがある**だけ**では
+  実行しない。編集対象ファイルが、承認済みプロジェクトルート(`root`)の**配下**
+  (realpath 包含)であり、かつ `root` へ遡る途中に(`root` 自身を除き)別の `.git`
+  境界が無いことも要求する(`_in_trusted_scope`)。**未承認のプロジェクトでは自動
+  lint が走らなくなる**(通知が出る。既定 1 時間のクールダウン。通知は「承認していれば
+  実際にコマンドが生成されたはずか」を副作用なしに判定してから出す — マーカー
+  ファイルが無い等、承認しても何も変わらない場合は通知しない)。背景: これらは
+  プロジェクト同梱の設定ファイルを読み込み、`eslint.config.js` は JavaScript として
+  評価されるため、clone しただけの未承認リポジトリで `.js` を 1 ファイル編集すると
+  リポジトリ由来のコードが実行され得た。0.7.0 の信頼ゲートは利用者が書いた
+  `commands` を承認制にしたが、組み込みの `AUTO_DETECT` はその外側にあった。加えて
+  「`root` が承認済みなら実行する」という初期実装には、承認済み `root` を足場に
+  `root` 外の未承認ファイルを対象にする経路と、`CLAUDE_PROJECT_DIR` で承認済みの
+  祖先へ `root` を持ち上げ自前の `.git` を持つ未承認のネストしたクローンを巻き込む
+  経路の2つが実際に外部コマンドを起動できる状態で残っており、本リリース内の
+  レビューで是正した。利用者が `commands` に明示したコマンドの扱いは変わらない。
+  承認は `.claude-hooks.json` の有無と無関係で、ディレクトリ単位である。既知の限界:
+  境界判定は `.git` の有無に依存するため、承認済みプロジェクト内の、`.git` がファイルである
+  入れ子リポジトリ(git submodule・linked worktree)は自動検出も通知も出ない(無言)一方、
+  `.git` を持たない未承認の vendored サブツリーは引き続き自動検出の対象になる。
+  通知の状態管理は `hooks/lib/trust.py` の新セクション
+  `autodetect_last`(状態ファイル `$HOME/.claude/safe-dev-hooks-state.json`)で、
+  `skipped_last` とは枠を共有しない。`trusted_projects` に `false` で登録した
+  プロジェクトにはこの通知を出さない。詳細:
+  [docs/hooks/quality_gate.md](docs/hooks/quality_gate.md)、
+  [docs/security-model.md](docs/security-model.md) §2・§4。
 
 ## [0.7.2] - 2026-08-25
 

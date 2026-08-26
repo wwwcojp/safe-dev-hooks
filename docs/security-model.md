@@ -26,6 +26,15 @@
 - **gitleaksは加算(union)のみで内蔵floorを置換しない**: `secrets_scan`/`exfil_guard`(`categories.credentials`)/`exfil_output_scan` のシークレット検出は `hooks/lib/scanners.py` の `scan_secrets()` に集約されており、内蔵の `rules/secret_patterns.json` を常に無条件で先に走らせるfloorとしたうえで、任意バックエンドの `gitleaks`(`scanners.gitleaks`、既定 `"auto"`)は検出結果を上に加算するだけである。gitleaksが未導入・呼び出し失敗(タイムアウト・異常終了・JSON解析失敗)であっても、また利用者が緩い `.gitleaks.toml` allowlistを用意していても、内蔵floorの判定・`exfil_guard.categories.credentials=deny` の保証は一切弱まらない。詳細: [docs/hooks/secrets_scan.md](hooks/secrets_scan.md)、[docs/configuration.md](configuration.md)。
 - **作業ディレクトリによってプロジェクト層の適用が変わらない(0.7.1)**: プロジェクト設定(`.claude-hooks.json`)の探索、`.gitleaks.toml` の自動検出、`config_guard` の `disableAllHooks` 検知、`quality_gate` のマーカー自動検出と実行ディレクトリ、`audit_log.path` の相対解決は、いずれもイベントの `cwd`(Bashの `cd` に追従する一時的な値)ではなく `hooks/lib/config.py` の `project_root(cwd)` が決定するプロジェクトルート(検証を通った `CLAUDE_PROJECT_DIR` → cwdの最近傍のgitルート → cwd)を基準にする。Claudeがサブディレクトリへ `cd` した状態でHookが発火しても、これらの判定はルートにいる場合と同じ結果になる。**例外はサブディレクトリ自身が別のgitリポジトリである場合**(vendored clone・submodule・`node_modules` 配下のリポジトリ)で、このときは `.git` の探索がそこで止まるためネストしたリポジトリがルートとして解決され、親プロジェクトの設定は読まれない。ただしこれは無言では起きない — 下記「無言で保護が外れない」の通知が出る。詳細: [docs/configuration.md](configuration.md)。
 - **プロジェクト層が落ちたら無言では終わらない(0.7.1)**: 「見つけたのに読まなかった `.claude-hooks.json`」は必ず `systemMessage` で通知する。通知条件は「(1) `cwd` およびその祖先のうち、基準ディレクトリ以外で `.claude-hooks.json` を持つ場所」と「(2) 検証で不採用にした `CLAUDE_PROJECT_DIR` の場所(そこに `.claude-hooks.json` がある場合)」の2つ。`cwd` 直下に設定ファイルが無い(=サブディレクトリで作業している)場合も、環境変数で基準をずらされた場合も、ネストしたgitリポジトリで基準が下位へ移った場合も(1)で通知される。プロジェクト外へ `cd` して環境変数のアンカーが祖先制約で不採用になった場合は、落ちた設定が `cwd` の祖先ではなく別の枝にあるため(1)では拾えず、(2)で通知される。(2)は通知するだけで採用はしない — 祖先制約(別プロジェクトの承認済み設定の持ち込み防止)は緩めない。この通知を出さない `audit_log` は通知の生成自体を行わないため、クールダウンの枠を消費しない(0.7.1 以前は消費しており、実運用でこの通知も0.7.0の未承認通知も届いていなかった)。
+- **未承認プロジェクトのコードを実行しない(0.8.0)**: `quality_gate` の自動検出は
+  `trusted_projects` で承認済みのプロジェクトでのみ実行する。したがって未承認の
+  リポジトリを clone して開いただけでは、`ruff`/`rustfmt`/`npx eslint` は起動せず、
+  それらがリポジトリ同梱の設定(`eslint.config.js` は JavaScript として評価される)を
+  読み込むこともない。承認は「プロジェクトルート(`root`)を承認したか」であり、
+  編集対象ファイルが `root` の実境界外(`root` 配下でない、または `root` へ遡る途中に
+  別の `.git` 境界がある)にある場合は、`root` 自体が承認済みでも自動検出しない
+  (`hooks/post_tool_use/quality_gate.py` の `_in_trusted_scope`)。境界内での実行は
+  従来どおりであり、承認とは「このリポジトリのメンテナを信頼する」という表明である。
 
 ## 3. 保証しないこと
 
@@ -55,6 +64,13 @@
     - **本来読まれるべきプロジェクト設定を読ませなくする** — 可能。ただし「見つけたのに読まなかった設定」の通知(D2、`hooks/lib/trust.py` の `notify_skipped`)により必ず可視化される。通知条件は `cwd` 直下だけでなく**その祖先まで**を対象にするため、Claudeがサブディレクトリで作業していて `cwd` 側に設定ファイルが無い状況でも通知される。
     - **利用者が別途承認済みの他プロジェクトの緩和設定を持ち込む**(`secrets_guard.allow_paths` は deny より先に評価される。`bash_guard.allow` は ask/exfil-ask を抑止する)— **できない**。`CLAUDE_PROJECT_DIR` は絶対パスであり、かつ `cwd` 自身または `cwd` の祖先を指す実在のディレクトリでなければ採用されず(`hooks/lib/config.py` の `_env_root`)、無関係な別プロジェクトを指す値は不採用になって git 探索へフォールバックする。絶対パス条件(0.7.2)が要る理由: 相対値はハーネスが注入した値ではなくフックプロセスの作業ディレクトリを基準に解決されてしまい、これはまさに0.7.1が除こうとしたプロセスcwd依存そのものであるうえ、この環境変数自体がリポジトリ同梱の `.claude/settings.json` の `env` から差し替え可能(攻撃者が影響できる入力)なので、実在確認や祖先制約より前に弾く必要がある。
     - git リポジトリでなく `CLAUDE_PROJECT_DIR` も無い環境では `cwd` へフォールバックし、この経路自体が発生しない。
+13. **自動検出は 0.7.0 の信頼ゲートの外側にあった**: 0.7.0 は利用者が書いた
+    `quality_gate.commands` を承認制にしたが、組み込みの `AUTO_DETECT` はゲートを
+    通らなかった。さらに 0.7.1 でマーカー探索の基準がプロジェクトルートになった結果、
+    サブディレクトリ作業中にも発火するようになり露出が広がった。0.8.0 で承認制に統一した。
+14. **quality_gate: 承認済みプロジェクト内の、`.git` がファイルである入れ子リポジトリ(git submodule・linked worktree)は自動検出の対象外になり、通知も出ない(0.8.0)** — `_in_trusted_scope` は「編集対象ファイルから `root` へ遡る途中に(`root` 自身を除き)別の `.git` 境界が無いこと」を要求する。submodule の `.git` はディレクトリでなくファイル(`gitdir: ...` を指す)であり、`git worktree add` で作る linked worktree の `.git` も同様にファイルである(実測でも同一の無言スキップを確認)。`Path.exists()` はファイル/ディレクトリを区別しないため、いずれも同じく境界として扱われる。したがってこれらの内側のファイルは、`root` が承認済みでも自動検出されない。さらに、通知条件も「承認していれば実際に自動検出コマンドが生まれたか」(`would_autodetect`)で判定するため、境界外であるこれらのファイルでは「承認しても何も変わらない」と判定され、承認を促す通知も出ない。fail-safe 側(見逃しではなく実行しない方向)の挙動であり、「これらは利用者が承認していない別リポジトリである」という解釈とも整合するが、無言で自動検出が効かなくなる点は明記しておく。詳細: [docs/hooks/quality_gate.md](hooks/quality_gate.md)。
+15. **quality_gate: `.git` を持たない未承認の vendored サブツリーは、依然として自動検出の対象になる(0.8.0、既知の限界)** — `_in_trusted_scope` の境界判定は `.git` の存在だけを見るヒューリスティックであり、「別リポジトリかどうか」を `.git` の有無で代用している。承認済み `root` 配下に `.git` を持たないまま外部コードを持ち込んだ vendored サブツリー(例: `root/vendor/evil/`)は、この境界判定をすり抜けて自動検出の対象になる(実測: `root` 配下の `vendor/evil/a.js` を編集すると `npx eslint` が起動する)。`.git` 境界による防御は部分的なものであり、vendored コードの持ち込み自体への対策にはならない。詳細: [docs/hooks/quality_gate.md](hooks/quality_gate.md)。
+16. **quality_gate: root 内のシンボリックリンク/ハードリンクは、リンク先の内容を自動検出の対象にし得るが、設定探索は root 内に留まる(0.8.0)** — `_in_trusted_scope` は編集対象ファイルの**親ディレクトリ**の realpath で判定するため、`root` 配下にあるファイル自体がシンボリックリンク/ハードリンクで `root` 外の実体を指していても境界チェックは通り、そのリンク先の内容が lint 対象になり得る。ただし前提設定ファイル(`pyproject.toml` 等)の探索は `root` 直下のみで行われ、リンク先ディレクトリの設定ファイル(例: リンク先の `ruff.toml`)は使われない(実 ruff で確認: `root` の `pyproject.toml` が適用され、リンク先の `ruff.toml` は無視される)。したがって「未承認の設定が評価される」という脅威はこの経路では成立しない。詳細: [docs/hooks/quality_gate.md](hooks/quality_gate.md)。
 
 ## 5. fail-open / fail-close 方針
 
