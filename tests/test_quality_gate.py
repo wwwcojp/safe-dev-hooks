@@ -273,3 +273,192 @@ def test_main_trusted_project_without_markers_emits_no_autodetect_notice(
     out = _run_main(monkeypatch, event, capsys)
     msg = (out or {}).get("systemMessage", "")
     assert "未承認のため" not in msg
+
+
+# --- レビュー ラウンド1 修正の回帰(0.8.0) ---
+
+
+def test_main_cwd_non_str_fails_open(monkeypatch, tmp_path, capsys):
+    """I1 回帰: cwd が str でなくても fail_open(exit 0, systemMessage)で終わる(traceback で
+    exit 1 になってはならない)。"""
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    event = {"tool_name": "Write", "cwd": 123, "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert out is not None
+    assert "異常終了" in out["systemMessage"]
+
+
+def test_main_cwd_null_does_not_crash(monkeypatch, tmp_path, capsys):
+    """I1 回帰: cwd が null でも exit 0 で処理できる(traceback を出さない)。"""
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    event = {"tool_name": "Write", "cwd": None, "tool_input": {"file_path": str(target)}}
+    # 例外で SystemExit が上がらず終了コード以外で落ちないことを確認する。
+    out = _run_main(monkeypatch, event, capsys)
+    assert out is None or "Traceback" not in json.dumps(out)
+
+
+def test_main_file_outside_approved_root_blocks_autodetect(monkeypatch, tmp_path, capsys):
+    """I2(a) 回帰: cwd は承認済みだが、file_path が cwd 配下ですらない未承認ディレクトリを
+    指す場合、自動検出コマンドを起動してはならない(subprocess.run をスパイして確認)。"""
+    approved = tmp_path / "P"
+    approved.mkdir()
+    (approved / "package.json").write_text("{}", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", approved)
+    untrusted = tmp_path / "U"
+    untrusted.mkdir()
+    target = untrusted / "a.js"
+    target.write_text("const x = 1\n", encoding="utf-8")
+    spy = mock.Mock(side_effect=AssertionError("root外のfile_pathでコマンドを起動してはならない"))
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "cwd": str(approved),
+             "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    spy.assert_not_called()
+
+
+def test_main_nested_untrusted_clone_without_env_is_blocked(monkeypatch, tmp_path, capsys):
+    """基準線: CLAUDE_PROJECT_DIR が無ければ、ネストした未承認クローン自身が基準になり
+    未承認としてブロックされる(既存動作。(b) の対照)。"""
+    anc = tmp_path / "anc"
+    anc.mkdir()
+    (anc / "pyproject.toml").write_text("", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", anc)
+    child = anc / "child"
+    (child / ".git").mkdir(parents=True)
+    target = child / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    spy = mock.Mock(
+        side_effect=AssertionError("ネストした未承認クローンでコマンドを起動してはならない")
+    )
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "cwd": str(child), "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    spy.assert_not_called()
+
+
+def test_main_nested_untrusted_clone_under_env_elevated_root_is_blocked(
+    monkeypatch, tmp_path, capsys
+):
+    """I2(b) 回帰: CLAUDE_PROJECT_DIR で承認済みの祖先へ基準を持ち上げても、自前の `.git`
+    を持つ未承認のネストしたクローンでは自動検出を起動してはならない(subprocess.run を
+    スパイして確認)。"""
+    anc = tmp_path / "anc"
+    anc.mkdir()
+    (anc / "pyproject.toml").write_text("", encoding="utf-8")
+    approve_project(monkeypatch, tmp_path / "global.json", anc)
+    child = anc / "child"
+    (child / ".git").mkdir(parents=True)
+    target = child / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(anc))
+    spy = mock.Mock(
+        side_effect=AssertionError("env で持ち上げた祖先配下の未承認クローンで起動してはならない")
+    )
+    monkeypatch.setattr(qg.subprocess, "run", spy)
+    event = {"tool_name": "Write", "cwd": str(child), "tool_input": {"file_path": str(target)}}
+    _run_main(monkeypatch, event, capsys)
+    spy.assert_not_called()
+
+
+def test_main_untrusted_no_markers_emits_no_notice(monkeypatch, tmp_path, capsys):
+    """I3 回帰: 未承認プロジェクトでもマーカーファイルが1つも無ければ、承認しても何も
+    変わらないので通知を出してはならない。"""
+    target = tmp_path / "README.md"
+    target.write_text("# hi\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    msg = (out or {}).get("systemMessage", "")
+    assert "未承認のため" not in msg
+
+
+def test_main_untrusted_no_markers_with_unrelated_global_commands_emits_no_notice(
+    monkeypatch, tmp_path, capsys
+):
+    """I3 回帰: グローバル設定の commands が編集対象に一致しない場合も、マーカーが無ければ
+    通知を出してはならない(レビュアの2件目の実証)。"""
+    (tmp_path / "global.json").write_text(
+        json.dumps({"quality_gate": {"commands": {"*.py": ["echo {file}"]}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "global.json")
+    target = tmp_path / "README.md"
+    target.write_text("# hi\n", encoding="utf-8")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    msg = (out or {}).get("systemMessage", "")
+    assert "未承認のため" not in msg
+
+
+def test_main_untrusted_with_markers_still_emits_notice(monkeypatch, tmp_path, capsys):
+    """I3 対照: 未承認かつマーカーがあれば(承認すれば自動検出が動く場面)通知は出る。"""
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    target = tmp_path / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "none.json")
+    monkeypatch.setattr(qg.subprocess, "run", lambda *a, **k: None)
+    event = {"tool_name": "Write", "cwd": str(tmp_path),
+             "tool_input": {"file_path": str(target)}}
+    out = _run_main(monkeypatch, event, capsys)
+    assert out is not None and "未承認のため" in out["systemMessage"]
+
+
+def test_would_autodetect_false_without_marker(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    assert qg.would_autodetect(str(tmp_path / "a.py"), str(tmp_path)) is False
+
+
+def test_would_autodetect_true_with_marker(monkeypatch, tmp_path):
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    assert qg.would_autodetect(str(tmp_path / "a.py"), str(tmp_path)) is True
+
+
+def test_would_autodetect_false_outside_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(qg.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("", encoding="utf-8")
+    outside = tmp_path / "outside" / "a.py"
+    outside.parent.mkdir()
+    outside.write_text("x = 1\n", encoding="utf-8")
+    assert qg.would_autodetect(str(outside), str(root)) is False
+
+
+def test_in_trusted_scope_true_for_plain_subdirectory(tmp_path):
+    root = tmp_path / "root"
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    assert qg._in_trusted_scope(str(sub / "app.py"), str(root)) is True
+
+
+def test_in_trusted_scope_false_for_unrelated_directory(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    assert qg._in_trusted_scope(str(other / "app.py"), str(root)) is False
+
+
+def test_in_trusted_scope_false_when_nested_git_boundary_crossed(tmp_path):
+    root = tmp_path / "root"
+    nested = root / "vendor" / "clone"
+    (nested / ".git").mkdir(parents=True)
+    target = nested / "app.py"
+    assert qg._in_trusted_scope(str(target), str(root)) is False
+
+
+def test_in_trusted_scope_true_when_root_itself_has_git(tmp_path):
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    sub = root / "a" / "b"
+    sub.mkdir(parents=True)
+    assert qg._in_trusted_scope(str(sub / "app.py"), str(root)) is True
