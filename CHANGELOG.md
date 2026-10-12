@@ -2,6 +2,19 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.9.0] - 2026-10-12
+
+### Changed(破壊的変更)
+- **`bash_guard` の deny が、LLM による偽陽性判定で ask に降格し得るようになった** — 機械判定(正規表現)にヒットしたコマンドを `claude -p` に渡し、`echo 'rm -rf /'` のような字面だけの一致(偽陽性)を見分ける。ヒットした deny が全て偽陽性と判定されたときは ask に降格する(ask より下には下がらない)。ask のみのヒットが全て偽陽性なら出力なし(`allow` は返さず Claude Code の通常の許可フローに任せる)+ `systemMessage` で解除したルールと理由を表示する。1 件でも本物なら従来どおり。判定不能(CLI 不在・再帰防止・タイムアウト・異常終了・出力不正・例外)は機械判定を採用し、CLI 不在と再帰防止以外は `systemMessage` で通知する。**既定で有効**。`bash_guard.llm_review.enabled: false` で従来の挙動(deny は常にブロック)に戻せる。残存リスク(コマンドはエージェントが書くため、プロンプトインジェクションで偽陽性と誤判定させられ得る。最悪でも deny は ask、ask は通常の許可フローまで)は [docs/security-model.md](docs/security-model.md) §3 に記載。詳細: [docs/hooks/bash_guard.md](docs/hooks/bash_guard.md)。
+- `hooks/hooks.json` の `bash_guard` の timeout を 10 秒から 60 秒に変更した(LLM 判定の内部タイムアウトは 45 秒)。`statusMessage` は付けない(ヒットの無い全ての Bash 実行でも表示されてしまうため)。
+- `exfil_guard` の semantic 判定も、`claude -p` の呼び出しを共通化した結果、全ツール無効化(`--tools=`)・プロンプトを標準入力で渡す方式になった(判定の振る舞い — haiku・30秒・ask 専用・fail-open — は変わらない)。
+
+### Added
+- `bash_guard.llm_review` 設定(`enabled`・`model`。既定 `{"enabled": true, "model": "sonnet"}`)。型不正は該当キー(または全体)を直下の層へ戻す。
+- `rules/bash_deny.json`・`rules/bash_ask.json` の各ルールに `description` を追加(LLM に渡すルールの説明)。
+- `rules/bash_fp_prompt.md`(偽陽性判定のプロンプト。固定で設定項目ではない)。
+- `hooks/lib/llm_judge.py`(`claude -p` 呼び出しの共通化。`bash_guard` と `exfil_guard` が使う)。
+
 ## [0.8.0] - 2026-08-26
 
 ### Fixed

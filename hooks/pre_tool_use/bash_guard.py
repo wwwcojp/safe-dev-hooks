@@ -211,11 +211,13 @@ _PLACEHOLDER_RE = re.compile(r"\{(rules|delimiter|command)\}")
 
 def build_prompt(command: str, hits: list[dict], delimiter: str) -> str:
     """固定テンプレートに埋め込む。置換は1パスで行い、コマンド内の {...} は展開しない。"""
-    template = (patterns.RULES_DIR / "bash_fp_prompt.md").read_text(encoding="utf-8")
-    rules = json.dumps(
-        [{"rule": h["name"], "description": h["description"], "regex": h["regex"]} for h in hits],
-        ensure_ascii=False, indent=2,
-    )
+    # pragma は等価変異の抑止: encoding は UTF-8 で差が出ず、ensure_ascii=None は False と同じ
+    path = patterns.RULES_DIR / "bash_fp_prompt.md"
+    template = path.read_text(encoding="utf-8")  # pragma: no mutate
+    entries = [
+        {"rule": h["name"], "description": h["description"], "regex": h["regex"]} for h in hits
+    ]
+    rules = json.dumps(entries, ensure_ascii=False, indent=2)  # pragma: no mutate
     values = {"rules": rules, "delimiter": delimiter, "command": command}
     return _PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
@@ -323,7 +325,7 @@ def main() -> None:
             cfg_all,
         )
         return
-    notice = None
+    notice = None  # pragma: no mutate  (後段は truthiness だけを見るため "" と等価)
     if verdict is not None:
         verdict, notice = llm_review(command, cfg, verdict)
     out = hook_io.pre_tool_decision(verdict["decision"], verdict["reason"]) if verdict else None

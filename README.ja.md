@@ -65,7 +65,7 @@ git clone https://github.com/wwwcojp/safe-dev-hooks.git
 
 | Hook | イベント / matcher | 動作 |
 |------|--------------------|------|
-| [bash_guard](docs/hooks/bash_guard.md) | PreToolUse / `Bash` | 回復不能系を **deny**(`rm -rf /`、`sudo rm`、保護ブランチへの force push — `+refspec` 形式を含む、`mkfs`、`dd`、fork bomb、`DROP TABLE`、`/`・`~` に対する `find … -delete`)。グレー系は **ask**(`git reset --hard`、再帰/強制の `rm`、`curl\|bash`、`curl`/`wget` でのシークレット送信)。保護ブランチは設定可能。連結コマンド(`&&` `;` `\|\|`)は分解して各セグメントを検査。 |
+| [bash_guard](docs/hooks/bash_guard.md) | PreToolUse / `Bash` | 回復不能系を **deny**(`rm -rf /`、`sudo rm`、保護ブランチへの force push — `+refspec` 形式を含む、`mkfs`、`dd`、fork bomb、`DROP TABLE`、`/`・`~` に対する `find … -delete`)。グレー系は **ask**(`git reset --hard`、再帰/強制の `rm`、`curl\|bash`、`curl`/`wget` でのシークレット送信)。保護ブランチは設定可能。連結コマンド(`&&` `;` `\|\|`)は分解して各セグメントを検査。0.9.0 から、正規表現のヒットは `claude -p` で偽陽性判定される(例: `echo 'rm -rf /'`)。偽陽性と判定された deny は ask に降格し、それより下がらない(`bash_guard.llm_review.enabled: false` で無効化)。 |
 | [secrets_guard](docs/hooks/secrets_guard.md) | PreToolUse / `Read\|Edit\|Write\|Bash` | 機密ファイルの読取・編集・`cat` を deny(`.env` — `.env.example` は許可 — `*.pem`、`id_rsa`、`~/.ssh/`、`~/.aws/credentials`)。さらに**Hook自身の設定・スクリプトを書込保護**(`.claude-hooks.json`、`.claude/settings.json`、`.mcp.json`、`.claude.json`、導入済みの `hooks/`・`rules/`)し、エージェントが自分のガードを無力化できないようにする — シェル変異に加え `curl`/`wget` の出力フラグも検査。読取は許可。 |
 | [exfil_guard](docs/hooks/exfil_guard.md) | PreToolUse / `mcp__.*\|WebFetch\|WebSearch` | 外部送信引数のDLP検査(認証情報・PII・機密マーカー・カスタムパターン・任意のsemantic判定)。 |
 | [exfil_output_scan](docs/hooks/exfil_output_scan.md) | PostToolUse / `mcp__.*\|WebFetch\|WebSearch` | ツール応答に含まれるシークレット・PIIを検出。警告かマスキングかを設定で選択。 |
@@ -103,7 +103,7 @@ git clone https://github.com/wwwcojp/safe-dev-hooks.git
 
 ## 保証すること / しないこと
 
-**保証すること。** deny層の照合(`bash_guard` / `secrets_guard`)は Claude Code の permission mode に依らず決定論的で、**設定ファイルからは解除できません** — `enabled: false` でも不可で、これは緩いask層のみを無効化します。deny層を外す唯一の方法はHook自体の除去です。
+**保証すること。** deny層の照合(`bash_guard` / `secrets_guard`)は Claude Code の permission mode に依らず決定論的で、**設定ファイルからは解除できません** — `enabled: false` でも不可で、これは緩いask層のみを無効化します。(0.9.0 から、LLM の偽陽性判定で偽陽性とされた `bash_guard` の deny は allow ではなく ask に降格します。`bash_guard.llm_review.enabled: false` で常にブロックに戻せます。)deny層を外す唯一の方法はHook自体の除去です。
 
 **保証しないこと。** Hooks は Claude Code の `disableAllHooks` や設定削除で丸ごと迂回できます — これは悪意あるユーザー対策ではなく、エージェントの事故防止です。正規表現ルールは未知・難読化された攻撃をすべては捕捉できず、任意の semantic 判定は確率的(`ask` 専用)です。保証すること/しないことの全体像と具体的な既知の限界は[セキュリティモデル](docs/security-model.md)を参照してください。
 
