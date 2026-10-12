@@ -42,6 +42,7 @@ def isolated_home_env(home, approve=None, pinned=False):
 
     HOME を home(tmp)に向ける(Path.home() は HOME を参照する)。approve にプロジェクト
     ディレクトリを渡すと、home/.claude/claude-hooks.json にその承認を書く。
+    サブプロセスのフックが LLM 判定(`claude -p`)を呼ばないよう、再帰防止の環境変数を立てる。
     """
     import json
     import os
@@ -61,4 +62,4 @@ def isolated_home_env(home, approve=None, pinned=False):
         (home / ".claude" / "claude-hooks.json").write_text(
             json.dumps({"trusted_projects": trusted}), encoding="utf-8"
         )
-    return {**os.environ, "HOME": str(home)}
+    return {**os.environ, "HOME": str(home), "SAFE_DEV_HOOKS_SEMANTIC": "1"}

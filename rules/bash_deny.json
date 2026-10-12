@@ -1,14 +1,14 @@
 [
-  {"name": "rm-root-or-home", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/(?!\\w)|~(?![\\w/])|~/(?!\\w)|\\$HOME(?![\\w/])|\\$HOME/(?!\\w))"},
-  {"name": "find-delete-root", "regex": "\\bfind\\s+(?:-\\S+\\s+){0,4}(/+|~|\\$HOME)\\s[^;|&]*(?:-delete\\b|-exec\\s+rm\\b)"},
-  {"name": "rm-system-dir", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(etc|usr|var|bin|boot|lib|opt|srv)(/|\\s|$)"},
-  {"name": "rm-home-root", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(home|Users)(/[\\w.-]+/?)?(\\s|$)"},
-  {"name": "sudo-rm", "regex": "\\bsudo\\s+rm\\b"},
-  {"name": "mkfs", "regex": "\\bmkfs(\\.|\\s)"},
-  {"name": "dd-to-device", "regex": "\\bdd\\s+[^;|&]*of=/dev/"},
-  {"name": "fork-bomb", "regex": ":\\(\\)\\s*\\{[^}]*\\}\\s*;?\\s*:"},
-  {"name": "chmod-777-root", "regex": "\\bchmod\\s+(-R\\s+)?777\\s+/(\\s|$)"},
-  {"name": "redirect-to-device", "regex": ">\\s*/dev/sd[a-z]"},
-  {"name": "sql-drop", "regex": "(?i)\\b(psql|mysql|mariadb|sqlite3|sqlcmd)\\b[^;|&]*\\bDROP\\s+(TABLE|DATABASE)\\b"},
-  {"name": "sql-truncate", "regex": "(?i)\\b(psql|mysql|mariadb|sqlite3|sqlcmd)\\b[^;|&]*\\bTRUNCATE\\s+(TABLE\\s+)?\\w"}
+  {"name": "rm-root-or-home", "description": "ルートディレクトリまたはホームディレクトリ全体を rm で削除する操作", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}(/(?!\\w)|~(?![\\w/])|~/(?!\\w)|\\$HOME(?![\\w/])|\\$HOME/(?!\\w))"},
+  {"name": "find-delete-root", "description": "ルートまたはホームを起点に find で一括削除(-delete / -exec rm)する操作", "regex": "\\bfind\\s+(?:-\\S+\\s+){0,4}(/+|~|\\$HOME)\\s[^;|&]*(?:-delete\\b|-exec\\s+rm\\b)"},
+  {"name": "rm-system-dir", "description": "/etc・/usr などのシステムディレクトリを rm で削除する操作", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(etc|usr|var|bin|boot|lib|opt|srv)(/|\\s|$)"},
+  {"name": "rm-home-root", "description": "/home・/Users、またはユーザーのホームディレクトリそのものを rm で削除する操作", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}/(home|Users)(/[\\w.-]+/?)?(\\s|$)"},
+  {"name": "sudo-rm", "description": "sudo で root 権限の rm を実行する操作", "regex": "\\bsudo\\s+rm\\b"},
+  {"name": "mkfs", "description": "mkfs でファイルシステムを作成(ディスクを初期化)する操作", "regex": "\\bmkfs(\\.|\\s)"},
+  {"name": "dd-to-device", "description": "dd でブロックデバイス(/dev/...)へ直接書き込む操作", "regex": "\\bdd\\s+[^;|&]*of=/dev/"},
+  {"name": "fork-bomb", "description": "フォーク爆弾(自分自身を再帰的に起動し続ける関数)を実行する操作", "regex": ":\\(\\)\\s*\\{[^}]*\\}\\s*;?\\s*:"},
+  {"name": "chmod-777-root", "description": "ルート全体のパーミッションを 777 に変える操作", "regex": "\\bchmod\\s+(-R\\s+)?777\\s+/(\\s|$)"},
+  {"name": "redirect-to-device", "description": "シェルのリダイレクトでディスクデバイス(/dev/sdX)へ書き込む操作", "regex": ">\\s*/dev/sd[a-z]"},
+  {"name": "sql-drop", "description": "データベースクライアントで DROP TABLE / DROP DATABASE を実行する操作", "regex": "(?i)\\b(psql|mysql|mariadb|sqlite3|sqlcmd)\\b[^;|&]*\\bDROP\\s+(TABLE|DATABASE)\\b"},
+  {"name": "sql-truncate", "description": "データベースクライアントで TRUNCATE を実行する操作", "regex": "(?i)\\b(psql|mysql|mariadb|sqlite3|sqlcmd)\\b[^;|&]*\\bTRUNCATE\\s+(TABLE\\s+)?\\w"}
 ]

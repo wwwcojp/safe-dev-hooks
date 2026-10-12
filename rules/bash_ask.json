@@ -1,10 +1,10 @@
 [
-  {"name": "git-reset-hard", "regex": "\\bgit\\s+reset\\s+[^;|&]*--hard"},
-  {"name": "git-clean-force", "regex": "\\bgit\\s+clean\\s+-[a-zA-Z]*f"},
-  {"name": "git-force-push", "regex": "\\bgit\\s+push\\s+[^;|&]*(--force(-with-lease)?\\b|-f\\b)"},
-  {"name": "rm-recursive-or-force", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}-\\S*[rRf]"},
-  {"name": "pipe-to-shell", "regex": "(curl|wget)[^;&]*\\|\\s*(sudo\\s+)?(ba|z|da)?sh\\b"},
-  {"name": "npm-publish", "regex": "\\bnpm\\s+publish\\b"},
-  {"name": "git-discard-worktree", "regex": "\\bgit\\s+(checkout|restore)\\s+(--\\s+)?\\.(\\s|$)"},
-  {"name": "find-delete", "regex": "\\bfind\\b[^;|&]*(?:-delete\\b|-exec\\s+rm\\b)"}
+  {"name": "git-reset-hard", "description": "git reset --hard で作業ツリーの未コミット変更を破棄する操作", "regex": "\\bgit\\s+reset\\s+[^;|&]*--hard"},
+  {"name": "git-clean-force", "description": "git clean -f で追跡されていないファイルを削除する操作", "regex": "\\bgit\\s+clean\\s+-[a-zA-Z]*f"},
+  {"name": "git-force-push", "description": "git push を --force / --force-with-lease / -f で強制実行する操作", "regex": "\\bgit\\s+push\\s+[^;|&]*(--force(-with-lease)?\\b|-f\\b)"},
+  {"name": "rm-recursive-or-force", "description": "rm を再帰(-r)または強制(-f)オプション付きで実行する操作", "regex": "\\brm\\s+(?:-\\S+\\s+){0,8}-\\S*[rRf]"},
+  {"name": "pipe-to-shell", "description": "curl / wget で取得した内容をパイプでシェルに渡して実行する操作", "regex": "(curl|wget)[^;&]*\\|\\s*(sudo\\s+)?(ba|z|da)?sh\\b"},
+  {"name": "npm-publish", "description": "npm publish でパッケージを公開する操作", "regex": "\\bnpm\\s+publish\\b"},
+  {"name": "git-discard-worktree", "description": "git checkout . / git restore . で作業ツリーの変更を破棄する操作", "regex": "\\bgit\\s+(checkout|restore)\\s+(--\\s+)?\\.(\\s|$)"},
+  {"name": "find-delete", "description": "find で一括削除(-delete / -exec rm)する操作", "regex": "\\bfind\\b[^;|&]*(?:-delete\\b|-exec\\s+rm\\b)"}
 ]

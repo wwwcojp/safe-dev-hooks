@@ -10,13 +10,13 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 
 @pytest.fixture(autouse=True)
-def _hide_external_secret_scanners(monkeypatch):
-    """実 gitleaks/docker へ出ずテストを決定論化する。gitleaks を検証するテストは
-    shutil.which / scanners._run_gitleaks を再度上書きしてスタブを指す。"""
+def _hide_external_tools(monkeypatch):
+    """実 gitleaks/docker/claude へ出ずテストを決定論化する。これらを検証するテストは
+    shutil.which / scanners._run_gitleaks / subprocess.run を再度上書きしてスタブを指す。"""
     real_which = shutil.which
 
     def fake_which(name, *args, **kwargs):
-        if name in ("gitleaks", "docker"):
+        if name in ("gitleaks", "docker", "claude"):
             return None
         return real_which(name, *args, **kwargs)
 

@@ -117,6 +117,7 @@ git リポジトリでない場所で `CLAUDE_PROJECT_DIR` も未設定の場合
 - **読み込み不能な設定ファイル**(不正なUTF-8バイト列、再帰上限を超える深いネスト、読取エラー)→ そのファイルを無視。
 - **列挙値のタイポ** → 該当キーのみ直下の層へ。対象は `exfil_guard.mode`・`exfil_output_scan.action`・`quality_gate.mode`・`scanners.gitleaks`・`notify.method`、および `exfil_guard.categories` の各値(`deny`/`ask`/`off`)。直下の層にも存在しない未知のカテゴリキーは削除する。
 - **`exfil_guard.categories` がオブジェクトでない** → `categories` 全体を直下の層へ。
+- **`bash_guard.llm_review` がオブジェクトでない** → `llm_review` 全体を直下の層へ。`bash_guard.llm_review.enabled`(真偽値でない)・`bash_guard.llm_review.model`(文字列でない)の型不正 → 該当キーのみ直下の層へ。
 - **文字列リストでない値**(`bash_guard.protected_branches`・`secrets_guard.write_protected_paths`)、**`scanners.gitleaks_image` / `gitleaks_config` の型不正** → 該当キーのみ直下の層へ。
 
 いずれも `_errors` に1件ずつ記録され、Hook出力に `[safe-dev-hooks] 設定ファイルに問題があるため既定値で継続: ...` が付く。設定の読み込み(`load_config`)は例外を送出しない設計で、どんな設定ファイルでもHookが判定前に異常終了することはない(deny層が設定ファイル起因で素通りしない)。
@@ -132,8 +133,10 @@ git リポジトリでない場所で `CLAUDE_PROJECT_DIR` も未設定の場合
     "extra_deny": [],                        // 追加のdeny正規表現(解除不可)
     "extra_ask": [],                         // 追加のask正規表現
     "allow": [],                             // ask層のみ解除可能な正規表現(deny層は解除不可)
-    "protected_branches": ["main", "master", "develop", "release", "production"]
+    "protected_branches": ["main", "master", "develop", "release", "production"],
                                               // force-push denyの対象ブランチ(refspec送信先も判定)
+    "llm_review": { "enabled": true, "model": "sonnet" }
+                                              // 機械判定のヒットを claude -p で偽陽性判定(0.9.0)。falseで従来の挙動
                                               // 空リスト [] にすると force-push の deny 昇格を無効化(ask層では拾われ得る)
   },
   "secrets_guard": {
@@ -217,7 +220,7 @@ git リポジトリでない場所で `CLAUDE_PROJECT_DIR` も未設定の場合
 ## 3. 設計原則
 
 - **安全側の既定**: 設定ファイルが無くても全ガードが既定値で動く。
-- **denyの解除は不可**: `bash_guard.allow` で解除できるのは ask 層のみ。回復不能系 deny は設定ファイルからは一切解除できない。`enabled: false` は deny 層を解除しない — `bash_guard.enabled: false` は ask 層(`bash_ask.json`・`extra_ask`・curl/wgetの外部送信ask検査)のみを無効化し、`secrets_guard.enabled: false` はdeny層に対してはno-op(`systemMessage` で通知のうえ検査を継続)である。deny層を止める唯一の正規手段は `hooks/hooks.json` からのHook除去、または Claude Code 本体の `disableAllHooks` である。
+- **denyの解除は不可**: ただし 0.9.0 の LLM 偽陽性判定(`bash_guard.llm_review`)により、`bash_guard` の deny は偽陽性と判定されたとき ask に降格し得る(例外。ask より下には下がらず、設定ファイルから deny を解除する手段ではない。`llm_review.enabled: false` で従来どおり常にブロック)。`bash_guard.allow` で解除できるのは ask 層のみ。回復不能系 deny は設定ファイルからは一切解除できない。`enabled: false` は deny 層を解除しない — `bash_guard.enabled: false` は ask 層(`bash_ask.json`・`extra_ask`・curl/wgetの外部送信ask検査)のみを無効化し、`secrets_guard.enabled: false` はdeny層に対してはno-op(`systemMessage` で通知のうえ検査を継続)である。deny層を止める唯一の正規手段は `hooks/hooks.json` からのHook除去、または Claude Code 本体の `disableAllHooks` である。
 - **データ駆動**: 危険パターン・シークレット形式・PII形式は `rules/*.json` に集約されており、コード変更なしで拡張可能。`extra_deny`/`extra_ask`/`custom_patterns`/`protected_paths`/`allow_paths` はビルトインへマージされる。
 - **quality_gateの自動検出**: `commands` 未指定時は拡張子と `pyproject.toml`(ruff)、`package.json`(eslint)、`Cargo.toml`(rustfmt)等から推定する。検出不能なら何もしない。
 

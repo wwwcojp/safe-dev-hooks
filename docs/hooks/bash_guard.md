@@ -8,7 +8,7 @@ Bashで実行されようとしているコマンドを検査し、回復不能�
 
 - イベント: `PreToolUse`
 - matcher: `Bash`
-- timeout: 10秒(`hooks/hooks.json`)
+- timeout: 60秒(`hooks/hooks.json`。0.9.0 で 10秒から変更。LLM 偽陽性判定の内部タイムアウトは40秒)
 
 `tool_name` が `Bash` 以外のイベントは即座に何もせず終了する。
 
@@ -59,6 +59,26 @@ Bashで実行されようとしているコマンドを検査し、回復不能�
 
 どのdeny/askルールにも一致しないコマンド。
 
+### LLM による偽陽性判定(0.9.0)
+
+上記の機械判定は変えず、ヒットがあったときだけ、その結果を `claude -p` による偽陽性判定にかける(`echo 'rm -rf /'` のような字面だけの一致を見分けるため)。ヒットが無いコマンドでは `claude` を呼ばない。ヒットした全ルール(deny・ask の両方)を 1 回の呼び出しでまとめて判定させる。
+
+| 機械判定の結果 | LLM の判定 | 最終判定 |
+|---|---|---|
+| deny ヒットあり | 全ての deny ヒットが偽陽性 | **ask**(理由に「deny から ask に降格」と LLM の理由を明記。deny は ask より下がらない) |
+| deny ヒットあり | 1 件でも本物、または判定不能 | deny(従来どおり) |
+| ask ヒットのみ | 全ての ask ヒットが偽陽性 | **何も返さない** + `systemMessage` で解除したルールと理由を表示(`allow` は返さない) |
+| ask ヒットのみ | 1 件でも本物、または判定不能 | ask(従来どおり) |
+| ヒットなし | (呼ばない) | 何も返さない |
+
+deny を降格するとき、同時に本物の ask ヒットがあっても結果は同じ ask なので区別しない(理由には本物と判定された ask ヒットも併記する)。
+
+**判定不能の扱い**: `claude` CLI が `PATH` 上に無い、再帰防止の環境変数 `SAFE_DEV_HOOKS_SEMANTIC=1` が立っている、タイムアウト(40秒)、終了コードが 0 以外、標準出力から JSON を取り出せない、出力の形式が不正、のいずれも機械判定をそのまま採用する(deny を弱めない)。CLI 不在と再帰防止以外は `systemMessage` で「LLM 判定に失敗したため機械判定を採用しました」と通知する。
+
+**LLM に渡す情報**: コマンド(20000 文字を超える場合は LLM を呼ばず判定不能として扱い、機械判定を採用して `systemMessage` で通知する)と、ヒットしたルールの名前・説明・正規表現だけ。プロンプト(`rules/bash_fp_prompt.md`)は固定で設定できない。判定用の `claude -p` は全ツールを無効化(`--tools=`)し、プロンプトは標準入力で渡す。子の `claude` はプロジェクトから切り離して起動する: 呼び出しごとに作る空の一時ディレクトリを作業ディレクトリにし(終了後に削除)、`--setting-sources=`(user/project/local の設定ファイルを読まない。プラグイン・フック・`CLAUDE.md` も読み込まれないことを実機確認)、`--strict-mcp-config`(MCP サーバーを起動しない)、`--no-session-persistence`(会話を保存しない)を付け、環境変数 `CLAUDE_PROJECT_DIR` を外す。**切り離せないもの**: 管理者のポリシー設定(managed settings)は適用される。Claude Code 標準のシステムプロンプト(OS・日付・作業ディレクトリ=空の一時ディレクトリのパス)は付く。会話は保存されないが、`~/.claude/projects/` に一時ディレクトリ名の空ディレクトリが呼び出しごとに残る。LLM の応答は厳格に解析し、ヒットしたルール全てに対する判定が揃っていない応答は判定不能として扱う。降格した ask の理由や解除の `systemMessage` に載る LLM の理由は「LLMの判断(未検証)」と明示する(コマンド経由で攻撃者が影響し得るテキストのため)。
+
+`bash_guard.llm_review.enabled: false` で無効化でき、その場合は従来どおり機械判定のみ(deny は常にブロック)。
+
 ## 設定キー
 
 | キー | 既定値 | 説明 |
@@ -67,6 +87,8 @@ Bashで実行されようとしているコマンドを検査し、回復不能�
 | `bash_guard.extra_deny` | `[]` | 追加のdeny正規表現(ビルトインへマージ、解除不可) |
 | `bash_guard.extra_ask` | `[]` | 追加のask正規表現(ビルトインへマージ) |
 | `bash_guard.allow` | `[]` | ask層の判定から除外する正規表現(deny層には無効) |
+| `bash_guard.llm_review.enabled` | `true` | falseで LLM による偽陽性判定を止める(機械判定のみ。deny は常にブロック) |
+| `bash_guard.llm_review.model` | `"sonnet"` | 偽陽性判定に使う `claude -p --model` の値 |
 | `bash_guard.protected_branches` | `["main", "master", "develop", "release", "production"]` | force-push denyの対象ブランチ(通常のrefspecと `+` refspec送信先の両方に適用) |
 
 ## 既知の限界
@@ -78,5 +100,7 @@ Bashで実行されようとしているコマンドを検査し、回復不能�
 - **force-pushの保護は送信先refspec基準**: `force-push-refspec` はrefspecのコロン右側(送信先ブランチ)が `protected_branches` に一致する場合のみdenyにする。`git push origin +main:feature`(ローカルの `main` を保護対象外のリモートブランチへ送る操作)はこの基準では保護対象にならない。
 - **SQL系ルールのクライアント文脈限定**: `sql-drop`/`sql-truncate` は `psql`/`mysql`/`mariadb`/`sqlite3`/`sqlcmd` の呼び出し文脈に限定したため、これら以外のSQLクライアント(未対応のCLIやGUIツール経由の実行など)による `DROP`/`TRUNCATE` は検出できない。
 - **外部送信ask検査はcurl/wget限定**: `scp`/`rsync`/`nc` などの他の転送コマンドによる送信は対象外。
-- **判定不能時は fail-close**: Hook自体が例外を送出した場合、ツール実行は止めず `ask` を返す(安全側)。
+- **判定不能時は fail-close**: Hook自体が例外を送出した場合、ツール実行は止めず `ask` を返す(安全側)。LLM 偽陽性判定の失敗は機械判定を採用し、deny を弱めない。
+- **LLM 判定は確率的**: 誤判定し得る。コマンドはエージェントが書くため、プロンプトインジェクションで本物の検知を偽陽性と誤判定させられる残存リスクがある。最悪でも deny は ask に、ask は通常の許可フローまでしか緩まない(`allow` にはならない)。
+- **LLM 判定には遅延とコストがかかる**: ヒットしたときだけ判定ごとに数秒程度(1回の実測で約4〜5秒)の遅延と API コストが発生する。ヒットの無いコマンドには影響しない。
 - deny/ask のいずれにも一致しなければ何も出力しないため、想定外の破壊的コマンドがルール未整備のまま素通りする可能性がある(新規パターンは [CONTRIBUTING.md](../../CONTRIBUTING.md) の手順で追加する)。
