@@ -92,3 +92,19 @@ def test_all_rules_json_parse_and_regex_compile():
             raise AssertionError(f"未知のルールファイル形式: {path.name}")
         checked += 1
     assert checked >= 6  # 全ルールファイルが検証対象に入っていること
+
+
+def test_bash_guard_timeout_allows_llm_review():
+    import json
+    from pathlib import Path
+
+    hooks = json.loads(
+        (Path(__file__).resolve().parent.parent / "hooks" / "hooks.json").read_text("utf-8")
+    )
+    entries = [
+        h for group in hooks["hooks"]["PreToolUse"] for h in group["hooks"]
+        if "bash_guard.py" in h["command"]
+    ]
+    assert len(entries) == 1
+    assert entries[0]["timeout"] == 60
+    assert "statusMessage" not in entries[0]

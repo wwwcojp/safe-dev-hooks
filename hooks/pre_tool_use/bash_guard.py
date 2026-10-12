@@ -2,15 +2,17 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Bashコマンドの破壊的操作を deny/ask の2段階でガードする。"""
+"""Bashコマンドの破壊的操作を deny/ask の2段階でガードし、ヒットは LLM で偽陽性判定する。"""
 import fnmatch
+import json
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from hooks.lib import config, hook_io, patterns  # noqa: E402
+from hooks.lib import config, hook_io, llm_judge, patterns  # noqa: E402
 
 
 def _segments(command: str) -> list[str]:
@@ -201,6 +203,108 @@ def collect_hits(command: str, cfg: dict) -> list[dict]:
     return hits
 
 
+LLM_TIMEOUT_SEC = 45
+LLM_MAX_COMMAND = 20000
+LLM_REASON_MAX = 200
+_PLACEHOLDER_RE = re.compile(r"\{(rules|delimiter|command)\}")
+
+
+def build_prompt(command: str, hits: list[dict], delimiter: str) -> str:
+    """固定テンプレートに埋め込む。置換は1パスで行い、コマンド内の {...} は展開しない。"""
+    template = (patterns.RULES_DIR / "bash_fp_prompt.md").read_text(encoding="utf-8")
+    rules = json.dumps(
+        [{"rule": h["name"], "description": h["description"], "regex": h["regex"]} for h in hits],
+        ensure_ascii=False, indent=2,
+    )
+    values = {"rules": rules, "delimiter": delimiter, "command": command}
+    return _PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
+
+
+def parse_verdicts(data: dict, hits: list[dict]) -> dict[str, tuple[bool, str]]:
+    """LLM 出力を厳格に解析する。真偽値の true だけを偽陽性とし、不正は ValueError。"""
+    items = data.get("verdicts")
+    if not isinstance(items, list):
+        raise ValueError("verdicts が配列ではありません")
+    names = {h["name"] for h in hits}
+    result: dict[str, tuple[bool, str]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("判定の要素がオブジェクトではありません")
+        name, fp = item.get("rule"), item.get("false_positive")
+        if not isinstance(name, str) or name not in names:
+            raise ValueError(f"ヒットしていないルールの判定があります: {name!r}")
+        if not isinstance(fp, bool):
+            raise ValueError(f"{name} の false_positive が真偽値ではありません")
+        if name in result:
+            if result[name][0] != fp:
+                raise ValueError(f"{name} に矛盾する判定があります")
+            continue
+        reason = item.get("reason")
+        result[name] = (fp, reason[:LLM_REASON_MAX] if isinstance(reason, str) else "")
+    missing = names - result.keys()
+    if missing:
+        raise ValueError(f"判定が欠けているルールがあります: {', '.join(sorted(missing))}")
+    return result
+
+
+def _describe(hits: list[dict], verdicts: dict[str, tuple[bool, str]]) -> str:
+    return "; ".join(f"{h['name']}: {verdicts[h['name']][1] or '(理由なし)'}" for h in hits)
+
+
+def combine(
+    hits: list[dict], verdicts: dict[str, tuple[bool, str]], mechanical: dict
+) -> tuple[dict | None, str | None]:
+    """判定表(spec)に従って最終判定を決める。deny は ask より下げない。"""
+    deny_hits = [h for h in hits if h["decision"] == "deny"]
+    ask_hits = [h for h in hits if h["decision"] == "ask"]
+    if deny_hits:
+        if not all(verdicts[h["name"]][0] for h in deny_hits):
+            return mechanical, None
+        reason = (
+            f"破壊的コマンドのルールに一致しましたが、LLM判定で字面の誤一致と判断されたため"
+            f" deny から ask に降格しました({_describe(deny_hits, verdicts)})。"
+        )
+        real_asks = [h for h in ask_hits if not verdicts[h["name"]][0]]
+        if real_asks:
+            names = ", ".join(h["name"] for h in real_asks)
+            reason += f"あわせて注意が必要なコマンドを検出: {names}。"
+        return {"decision": "ask", "reason": reason + "実行してよいか確認してください"}, None
+    if not all(verdicts[h["name"]][0] for h in ask_hits):
+        return mechanical, None
+    return None, (
+        "[safe-dev-hooks] bash_guard: LLM判定で字面の誤一致と判断し、確認を省略しました"
+        f"({_describe(ask_hits, verdicts)})"
+    )
+
+
+def llm_review(command: str, cfg: dict, mechanical: dict) -> tuple[dict | None, str | None]:
+    """機械判定のヒットを LLM で偽陽性判定する。例外は出さず、判定不能なら機械判定を返す。"""
+    review_cfg = cfg.get("llm_review") or {}
+    if not review_cfg.get("enabled", True):
+        return mechanical, None
+    try:
+        hits = collect_hits(command, cfg)
+        if not hits:
+            raise ValueError("機械判定のヒットを再現できません")
+        if len(command) > LLM_MAX_COMMAND:
+            raise ValueError(f"コマンドが長すぎます({len(command)}文字)")
+        delimiter = "CMD-" + secrets.token_hex(16)
+        if delimiter in command:
+            raise ValueError("区切り文字列がコマンドと衝突しました")
+        data = llm_judge.run_json(
+            build_prompt(command, hits, delimiter),
+            review_cfg.get("model", "sonnet"), LLM_TIMEOUT_SEC,
+        )
+        verdicts = parse_verdicts(data, hits)
+    except llm_judge.Unavailable:
+        return mechanical, None
+    except Exception as exc:  # 判定不能は緩めない(機械判定を採用し、可視化する)
+        return mechanical, (
+            f"[safe-dev-hooks] bash_guard: LLM判定に失敗したため機械判定を採用しました: {exc}"
+        )
+    return combine(hits, verdicts, mechanical)
+
+
 def main() -> None:
     event = hook_io.read_event()
     if event.get("tool_name") != "Bash":
@@ -219,7 +323,13 @@ def main() -> None:
             cfg_all,
         )
         return
+    notice = None
+    if verdict is not None:
+        verdict, notice = llm_review(command, cfg, verdict)
     out = hook_io.pre_tool_decision(verdict["decision"], verdict["reason"]) if verdict else None
+    if notice:
+        out = dict(out or {})
+        out["systemMessage"] = notice
     hook_io.finalize(out, cfg_all)
 
 
