@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from helpers import approve_project, isolated_home_env
 
 from hooks.lib import config, trust
@@ -215,6 +216,68 @@ def test_protected_branches_invalid_type_falls_back(tmp_path, monkeypatch):
     assert cfg["_errors"] == [
         "bash_guard.protected_branches: 不正な値 'main' のため無視しました(下位層の値を使用)"
     ]
+
+
+def test_llm_review_defaults(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "GLOBAL_CONFIG_PATH", tmp_path / "missing.json")
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["llm_review"] == {"enabled": True, "model": "sonnet"}
+
+
+def test_llm_review_can_be_disabled_by_project(tmp_path, monkeypatch):
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"bash_guard": {"llm_review": {"enabled": false}}}', encoding="utf-8"
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path, pinned=True)
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["llm_review"] == {"enabled": False, "model": "sonnet"}
+    assert cfg["_errors"] == []
+
+
+def test_llm_review_not_a_dict_falls_back(tmp_path, monkeypatch):
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"bash_guard": {"llm_review": true}}', encoding="utf-8"
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path, pinned=True)
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["llm_review"] == {"enabled": True, "model": "sonnet"}
+    assert cfg["_errors"] == [
+        "bash_guard.llm_review: 不正な値 True のため無視しました(下位層の値を使用)"
+    ]
+
+
+@pytest.mark.parametrize(
+    "override, label, bad",
+    [
+        ('{"enabled": "no"}', "enabled", "'no'"),
+        ('{"model": 3}', "model", "3"),
+    ],
+)
+def test_llm_review_sub_key_invalid_type_falls_back(tmp_path, monkeypatch, override, label, bad):
+    (tmp_path / ".claude-hooks.json").write_text(
+        '{"bash_guard": {"llm_review": ' + override + "}}", encoding="utf-8"
+    )
+    approve_project(monkeypatch, tmp_path / "global.json", tmp_path, pinned=True)
+    cfg = config.load_config(str(tmp_path))
+    assert cfg["bash_guard"]["llm_review"] == {"enabled": True, "model": "sonnet"}
+    assert cfg["_errors"] == [
+        f"bash_guard.llm_review.{label}: 不正な値 {bad} のため無視しました(下位層の値を使用)"
+    ]
+
+
+def test_llm_review_invalid_project_value_keeps_global_choice(tmp_path, monkeypatch):
+    """プロジェクト層の型不正は、ビルトイン既定でなくグローバル層の値へ戻る。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".claude-hooks.json").write_text(
+        '{"bash_guard": {"llm_review": {"enabled": "yes"}}}', encoding="utf-8"
+    )
+    approve_project(
+        monkeypatch, tmp_path / "global.json", proj, pinned=True,
+        global_cfg={"bash_guard": {"llm_review": {"enabled": False}}},
+    )
+    cfg = config.load_config(str(proj))
+    assert cfg["bash_guard"]["llm_review"]["enabled"] is False
 
 
 def test_write_protected_paths_invalid_type_falls_back(tmp_path, monkeypatch):

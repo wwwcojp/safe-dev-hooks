@@ -14,6 +14,7 @@ DEFAULTS: dict = {
     "bash_guard": {
         "enabled": True, "extra_deny": [], "extra_ask": [], "allow": [],
         "protected_branches": ["main", "master", "develop", "release", "production"],
+        "llm_review": {"enabled": True, "model": "sonnet"},
     },
     "secrets_guard": {
         "enabled": True, "protected_paths": [], "allow_paths": [],
@@ -376,6 +377,18 @@ def _validate(cfg: dict, fallback: dict, errors: list) -> dict:
         else:
             errors.append(f"{label}: 不正な値 {cat_value!r} のため無視しました")
             del categories[cat_key]
+    fallback_review = fallback["bash_guard"]["llm_review"]
+    review = cfg["bash_guard"].get("llm_review")
+    if not isinstance(review, dict):
+        revert(cfg["bash_guard"], "llm_review", fallback_review, "bash_guard.llm_review", review)
+        review = cfg["bash_guard"]["llm_review"]
+    for sub_key, expected in (("enabled", bool), ("model", str)):
+        value = review.get(sub_key)
+        if not isinstance(value, expected):
+            revert(
+                review, sub_key, fallback_review[sub_key],
+                f"bash_guard.llm_review.{sub_key}", value,
+            )
     for section, sub_key in (
         ("bash_guard", "protected_branches"),
         ("secrets_guard", "write_protected_paths"),
