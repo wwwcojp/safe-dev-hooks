@@ -490,3 +490,24 @@ def test_llm_review_failure_notices_name_the_cause(monkeypatch):
     monkeypatch.setattr(bash_guard.secrets, "token_hex", lambda n: "abc")
     _, (_, notice) = _review(DENY_CMD + " # CMD-abc")
     assert notice.endswith(": 区切り文字列がコマンドと衝突しました")
+
+
+def test_prompt_template_is_decoded_as_exactly_utf8(monkeypatch):
+    seen = []
+
+    class FakeBytes(bytes):
+        def decode(self, encoding="utf-8", errors="strict"):
+            seen.append(encoding)
+            return "{rules}{delimiter}{command}"
+
+    class FakePath:
+        def read_bytes(self):
+            return FakeBytes(b"x")
+
+    class FakeDir:
+        def __truediv__(self, name):
+            return FakePath()
+
+    monkeypatch.setattr(bash_guard.patterns, "RULES_DIR", FakeDir())
+    bash_guard.build_prompt("echo hi", [_hit("r1", "deny")], "CMD-xyz")
+    assert seen == ["utf-8"]

@@ -211,9 +211,9 @@ _PLACEHOLDER_RE = re.compile(r"\{(rules|delimiter|command)\}")
 
 def build_prompt(command: str, hits: list[dict], delimiter: str) -> str:
     """固定テンプレートに埋め込む。置換は1パスで行い、コマンド内の {...} は展開しない。"""
-    # pragma は等価変異の抑止: encoding は UTF-8 で差が出ず、ensure_ascii=None は False と同じ
+    # pragma は等価変異の抑止: ensure_ascii=None は False と同じ
     path = patterns.RULES_DIR / "bash_fp_prompt.md"
-    template = path.read_text(encoding="utf-8")  # pragma: no mutate
+    template = path.read_bytes().decode("utf-8")  # ロケールに依らず UTF-8 で読む
     entries = [
         {"rule": h["name"], "description": h["description"], "regex": h["regex"]} for h in hits
     ]
