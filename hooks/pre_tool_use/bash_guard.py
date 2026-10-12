@@ -78,6 +78,12 @@ def _exfil_ask(segment: str) -> dict | None:
     return None
 
 
+EXFIL_RULE_NAME = "exfil-sensitive-send"
+EXFIL_DESCRIPTION = (
+    "環境変数・コマンド置換・機密ファイルを伴う curl/wget のデータ送信(機微情報の外部送信)"
+)
+
+
 def _force_push_rules(cfg: dict) -> list[dict]:
     branches = cfg.get("protected_branches")
     if branches is None:  # キー未指定(直接呼び出し等)は最小限の既定で保護
@@ -85,55 +91,114 @@ def _force_push_rules(cfg: dict) -> list[dict]:
     if not branches:  # 空リスト = 保護ブランチ無し(force-push規則を生成しない)
         return []
     alt = "|".join(re.escape(b) for b in branches)
+    desc = f"保護ブランチ({', '.join(branches)})への強制プッシュ(リモート履歴の上書き)"
     return [
-        {"name": "force-push-protected",
+        {"name": "force-push-protected", "description": desc,
          "regex": rf"\bgit\s+push\s+[^;|&]*(--force\b|-f\b)[^;|&]*\b({alt})\b"},
-        {"name": "force-push-protected-order",
+        {"name": "force-push-protected-order", "description": desc,
          "regex": rf"\bgit\s+push\s+[^;|&]*\b({alt})\b[^;|&]*(--force\b|-f\b)"},
-        {"name": "force-push-refspec",
+        {"name": "force-push-refspec", "description": desc,
          "regex": rf"\bgit\s+push\b[^;|&]*\s\+(?:[^\s:]*:)?(?:[^\s:]*/)?({alt})(?![\w.@:/-])"},
     ]
 
 
-def evaluate(command: str, cfg: dict) -> dict | None:
-    enabled = cfg.get("enabled", True)
+def _user_rule(kind: str, pattern: str) -> dict:
+    return {
+        "name": f"extra_{kind}:{pattern}",
+        "regex": pattern,
+        "description": f"利用者が追加した正規表現 {pattern} に一致する操作",
+    }
+
+
+def _rules(cfg: dict) -> tuple[list[dict], list[dict], list[str]]:
     deny_rules = (
         list(patterns.load_rules("bash_deny.json"))
         + _force_push_rules(cfg)
-        + [{"name": f"extra_deny:{p}", "regex": p} for p in cfg.get("extra_deny", [])]
+        + [_user_rule("deny", p) for p in cfg.get("extra_deny", [])]
     )
     ask_rules = list(patterns.load_rules("bash_ask.json")) + [
-        {"name": f"extra_ask:{p}", "regex": p} for p in cfg.get("extra_ask", [])
+        _user_rule("ask", p) for p in cfg.get("extra_ask", [])
     ]
-    allow = cfg.get("allow", [])
+    return deny_rules, ask_rules, cfg.get("allow", [])
+
+
+def _targets(command: str) -> list[str]:
     targets = [_normalize(s) for s in _segments(command)] + [_normalize(command)]
     expanded = _expand_simple_assignments(command)
     if expanded != command:
         targets += [_normalize(s) for s in _segments(expanded)] + [_normalize(expanded)]
+    return targets
+
+
+def _deny_reason(rule: dict) -> str:
+    return f"破壊的コマンドを検出: {rule['name']}(deny層は設定で解除できません)"
+
+
+def _ask_reason(rule: dict) -> str:
+    return f"注意が必要なコマンドを検出: {rule['name']}。実行してよいか確認してください"
+
+
+def evaluate(command: str, cfg: dict) -> dict | None:
+    enabled = cfg.get("enabled", True)
+    deny_rules, ask_rules, allow = _rules(cfg)
+    targets = _targets(command)
     for rule in deny_rules:
         if any(re.search(rule["regex"], t) for t in targets):
-            return {
-                "decision": "deny",
-                "reason": f"破壊的コマンドを検出: {rule['name']}(deny層は設定で解除できません)",
-            }
+            return {"decision": "deny", "reason": _deny_reason(rule)}
     if not enabled:
         return None
     for rule in ask_rules:
         for t in targets:
             if re.search(rule["regex"], t) and not any(re.search(a, t) for a in allow):
-                return {
-                    "decision": "ask",
-                    "reason": (
-                        f"注意が必要なコマンドを検出: {rule['name']}。"
-                        "実行してよいか確認してください"
-                    ),
-                }
+                return {"decision": "ask", "reason": _ask_reason(rule)}
     for seg in _segments(command):
         nseg = _normalize(seg)
         verdict = _exfil_ask(nseg)
         if verdict and not any(re.search(a, nseg) for a in allow):
             return verdict
     return None
+
+
+def collect_hits(command: str, cfg: dict) -> list[dict]:
+    """LLM 判定用に、ヒットした全ルールを deny → ask → 外部送信 ask の順で集める。
+
+    evaluate() は先頭のヒットで止まるが、LLM 判定では「1 つの deny が偽陽性でも
+    別の deny が本物なら止める」必要があるため全件を見る。先頭要素は常に evaluate()
+    の結果と一致する(test_collect_hits_first_hit_matches_evaluate)。
+    """
+    enabled = cfg.get("enabled", True)
+    deny_rules, ask_rules, allow = _rules(cfg)
+    targets = _targets(command)
+    hits: list[dict] = []
+
+    def add(rule: dict, decision: str, reason: str) -> None:
+        if any(h["name"] == rule["name"] for h in hits):
+            return
+        hits.append({
+            "name": rule["name"], "regex": rule["regex"],
+            "description": rule.get("description", ""),
+            "decision": decision, "reason": reason,
+        })
+
+    for rule in deny_rules:
+        if any(re.search(rule["regex"], t) for t in targets):
+            add(rule, "deny", _deny_reason(rule))
+    if not enabled:
+        return hits
+    for rule in ask_rules:
+        if any(
+            re.search(rule["regex"], t) and not any(re.search(a, t) for a in allow)
+            for t in targets
+        ):
+            add(rule, "ask", _ask_reason(rule))
+    for seg in _segments(command):
+        nseg = _normalize(seg)
+        verdict = _exfil_ask(nseg)
+        if verdict and not any(re.search(a, nseg) for a in allow):
+            exfil = {"name": EXFIL_RULE_NAME, "regex": "", "description": EXFIL_DESCRIPTION}
+            add(exfil, "ask", verdict["reason"])
+            break
+    return hits
 
 
 def main() -> None:
