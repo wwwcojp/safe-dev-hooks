@@ -56,6 +56,7 @@ def test_all_deny_false_positive_downgrades_to_ask(monkeypatch):
     assert "LLM判定" in verdict["reason"] and "deny から ask に降格" in verdict["reason"]
     assert "rm-root-or-home" in verdict["reason"]
     assert "rm-root-or-home の理由" in verdict["reason"]
+    assert "LLMの判断(未検証)" in verdict["reason"]
     assert notice is None
 
 
@@ -162,9 +163,10 @@ def test_recursion_guard_keeps_mechanical_without_notice(monkeypatch):
         '{"verdicts": [{"rule": "rm-root-or-home", "false_positive": true}]}',  # 欠落
     ],
 )
-def test_invalid_output_keeps_mechanical_with_notice(monkeypatch, stdout):
+@pytest.mark.parametrize("cmd", [DENY_CMD, ASK_CMD])
+def test_invalid_output_keeps_mechanical_with_notice(monkeypatch, stdout, cmd):
     _fake_llm(monkeypatch, stdout=stdout)
-    mechanical, (verdict, notice) = _review(DENY_CMD)
+    mechanical, (verdict, notice) = _review(cmd)
     assert verdict == mechanical
     prefix = "[safe-dev-hooks] bash_guard: LLM判定に失敗したため機械判定を採用しました"
     assert notice.startswith(prefix)
@@ -200,6 +202,42 @@ def test_no_hits_reproduced_keeps_mechanical(monkeypatch):
     mechanical = {"decision": "ask", "reason": "x"}
     verdict, notice = bash_guard.llm_review(ASK_CMD, CFG, mechanical)
     assert verdict == mechanical and notice
+
+
+def test_hits_disagreeing_with_mechanical_deny_keep_deny(monkeypatch):
+    """collect_hits と evaluate がずれて ask しか返さなくても、deny を ask 未満に落とさない。"""
+    ask_only = [h for h in bash_guard.collect_hits(DENY_CMD, CFG) if h["decision"] == "ask"]
+    assert ask_only
+    monkeypatch.setattr(bash_guard, "collect_hits", lambda c, cfg: ask_only)
+    record = []
+    _fake_llm(monkeypatch, {h["name"]: True for h in ask_only}, record=record)
+    mechanical = bash_guard.evaluate(DENY_CMD, CFG)
+    assert mechanical["decision"] == "deny"
+    verdict, notice = bash_guard.llm_review(DENY_CMD, CFG, mechanical)
+    assert verdict == mechanical
+    assert notice == (
+        "[safe-dev-hooks] bash_guard: LLM判定に失敗したため機械判定を採用しました: "
+        "機械判定とヒットの集計が一致しません")
+    assert record == []
+
+
+def test_hits_with_different_first_reason_are_undecidable(monkeypatch):
+    hits = bash_guard.collect_hits(DENY_CMD, CFG)
+    _fake_llm(monkeypatch, {h["name"]: True for h in hits})
+    mechanical = {"decision": "deny", "reason": "別の理由"}
+    verdict, notice = bash_guard.llm_review(DENY_CMD, CFG, mechanical)
+    assert verdict == mechanical and "一致しません" in notice
+
+
+def test_failure_notice_caps_llm_controlled_text(monkeypatch):
+    long_name = "z" * 5000
+    stdout = json.dumps({"verdicts": [{"rule": long_name, "false_positive": True}]})
+    _fake_llm(monkeypatch, stdout=stdout)
+    mechanical, (verdict, notice) = _review(DENY_CMD)
+    prefix = "[safe-dev-hooks] bash_guard: LLM判定に失敗したため機械判定を採用しました: "
+    assert verdict == mechanical
+    assert notice.startswith(prefix)
+    assert len(notice) == len(prefix) + bash_guard.LLM_REASON_MAX
 
 
 def test_delimiter_collision_is_undecidable(monkeypatch):
@@ -319,6 +357,20 @@ def test_main_llm_failure_keeps_deny_and_notifies(monkeypatch, capsys, tmp_path)
     assert "LLM判定に失敗" in out["systemMessage"]
 
 
+@pytest.mark.parametrize("cmd, decision", [(DENY_CMD, "deny"), (ASK_CMD, "ask")])
+def test_main_nonzero_exit_keeps_mechanical_and_notifies(
+    monkeypatch, capsys, tmp_path, cmd, decision
+):
+    monkeypatch.setattr(llm_judge.shutil, "which", lambda name: "/usr/bin/claude")
+    done = FakeCompleted("", returncode=1)
+    done.stderr = "Error: not logged in"
+    monkeypatch.setattr(llm_judge.subprocess, "run", lambda *a, **k: done)
+    out = json.loads(_run_main(monkeypatch, capsys, tmp_path, cmd))
+    assert out["hookSpecificOutput"]["permissionDecision"] == decision
+    assert "終了コード 1" in out["systemMessage"]
+    assert "not logged in" in out["systemMessage"]
+
+
 def test_main_safe_command_does_not_call_llm(monkeypatch, capsys, tmp_path):
     record = []
     _fake_llm(monkeypatch, {}, record=record)
@@ -375,7 +427,7 @@ def test_combine_message_texts():
     verdict, notice = bash_guard.combine(hits, verdicts, {"decision": "deny", "reason": "m"})
     assert notice is None and verdict["decision"] == "ask"
     assert "deny から ask に降格" in verdict["reason"]
-    assert "d1: 理由1" in verdict["reason"]
+    assert "(LLMの判断(未検証): d1: 理由1)" in verdict["reason"]
     assert "a1, a2" in verdict["reason"]
     assert verdict["reason"].endswith("実行してよいか確認してください")
 
@@ -387,7 +439,7 @@ def test_combine_ask_only_notice_text_and_separators():
     assert verdict is None
     assert notice == (
         "[safe-dev-hooks] bash_guard: LLM判定で字面の誤一致と判断し、確認を省略しました"
-        "(a1: 理由1; a2: (理由なし))"
+        "(LLMの判断(未検証): a1: 理由1; a2: (理由なし))"
     )
 
 
@@ -455,8 +507,11 @@ def test_llm_review_call_arguments_and_defaults(monkeypatch):
     mechanical = bash_guard.evaluate(DENY_CMD, cfg)
     bash_guard.llm_review(DENY_CMD, cfg, mechanical)
     cmd, kwargs = calls[0]
-    assert cmd == ["claude", "-p", "--model", "sonnet", "--tools="]
-    assert kwargs["timeout"] == bash_guard.LLM_TIMEOUT_SEC == 45
+    assert cmd == [
+        "claude", "-p", "--model", "sonnet", "--tools=",
+        "--setting-sources=", "--strict-mcp-config", "--no-session-persistence",
+    ]
+    assert kwargs["timeout"] == bash_guard.LLM_TIMEOUT_SEC == 40
     assert DENY_CMD in kwargs["input"]
     import re
     delimiter = re.search(r"<<<(CMD-[0-9a-f]+)>>>", kwargs["input"]).group(1)

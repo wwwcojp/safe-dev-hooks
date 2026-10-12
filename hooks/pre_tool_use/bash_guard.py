@@ -203,21 +203,21 @@ def collect_hits(command: str, cfg: dict) -> list[dict]:
     return hits
 
 
-LLM_TIMEOUT_SEC = 45
+LLM_TIMEOUT_SEC = 40  # hooks.json の timeout 60 秒に uv の起動分の余裕を残す
 LLM_MAX_COMMAND = 20000
 LLM_REASON_MAX = 200
+_RULES_JSON_KWARGS = {"ensure_ascii": False, "indent": 2}
 _PLACEHOLDER_RE = re.compile(r"\{(rules|delimiter|command)\}")
 
 
 def build_prompt(command: str, hits: list[dict], delimiter: str) -> str:
     """固定テンプレートに埋め込む。置換は1パスで行い、コマンド内の {...} は展開しない。"""
-    # pragma は等価変異の抑止: ensure_ascii=None は False と同じ
     path = patterns.RULES_DIR / "bash_fp_prompt.md"
     template = path.read_bytes().decode("utf-8")  # ロケールに依らず UTF-8 で読む
     entries = [
         {"rule": h["name"], "description": h["description"], "regex": h["regex"]} for h in hits
     ]
-    rules = json.dumps(entries, ensure_ascii=False, indent=2)  # pragma: no mutate
+    rules = json.dumps(entries, **_RULES_JSON_KWARGS)
     values = {"rules": rules, "delimiter": delimiter, "command": command}
     return _PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
@@ -250,7 +250,9 @@ def parse_verdicts(data: dict, hits: list[dict]) -> dict[str, tuple[bool, str]]:
 
 
 def _describe(hits: list[dict], verdicts: dict[str, tuple[bool, str]]) -> str:
-    return "; ".join(f"{h['name']}: {verdicts[h['name']][1] or '(理由なし)'}" for h in hits)
+    # 理由は LLM の出力(コマンド経由で攻撃者が影響し得る)なので、未検証と明示する
+    details = "; ".join(f"{h['name']}: {verdicts[h['name']][1] or '(理由なし)'}" for h in hits)
+    return f"LLMの判断(未検証): {details}"
 
 
 def combine(
@@ -288,6 +290,10 @@ def llm_review(command: str, cfg: dict, mechanical: dict) -> tuple[dict | None, 
         hits = collect_hits(command, cfg)
         if not hits:
             raise ValueError("機械判定のヒットを再現できません")
+        first = {"decision": hits[0]["decision"], "reason": hits[0]["reason"]}
+        if first != {"decision": mechanical["decision"], "reason": mechanical["reason"]}:
+            # ずれたまま判定すると deny が ask 未満に落ち得る(全件偽陽性 → 出力なし)
+            raise ValueError("機械判定とヒットの集計が一致しません")
         if len(command) > LLM_MAX_COMMAND:
             raise ValueError(f"コマンドが長すぎます({len(command)}文字)")
         delimiter = "CMD-" + secrets.token_hex(16)
@@ -301,8 +307,9 @@ def llm_review(command: str, cfg: dict, mechanical: dict) -> tuple[dict | None, 
     except llm_judge.Unavailable:
         return mechanical, None
     except Exception as exc:  # 判定不能は緩めない(機械判定を採用し、可視化する)
+        detail = str(exc)[:LLM_REASON_MAX]  # 例外文に LLM 出力が入り得るので長さを抑える
         return mechanical, (
-            f"[safe-dev-hooks] bash_guard: LLM判定に失敗したため機械判定を採用しました: {exc}"
+            f"[safe-dev-hooks] bash_guard: LLM判定に失敗したため機械判定を採用しました: {detail}"
         )
     return combine(hits, verdicts, mechanical)
 

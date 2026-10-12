@@ -234,15 +234,18 @@ def test_llm_review_can_be_disabled_by_project(tmp_path, monkeypatch):
     assert cfg["_errors"] == []
 
 
-def test_llm_review_not_a_dict_falls_back(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "raw, shown", [("true", "True"), ("null", "None"), ('["x"]', "['x']")]
+)
+def test_llm_review_not_a_dict_falls_back(tmp_path, monkeypatch, raw, shown):
     (tmp_path / ".claude-hooks.json").write_text(
-        '{"bash_guard": {"llm_review": true}}', encoding="utf-8"
+        '{"bash_guard": {"llm_review": ' + raw + "}}", encoding="utf-8"
     )
     approve_project(monkeypatch, tmp_path / "global.json", tmp_path, pinned=True)
     cfg = config.load_config(str(tmp_path))
     assert cfg["bash_guard"]["llm_review"] == {"enabled": True, "model": "sonnet"}
     assert cfg["_errors"] == [
-        "bash_guard.llm_review: 不正な値 True のため無視しました(下位層の値を使用)"
+        f"bash_guard.llm_review: 不正な値 {shown} のため無視しました(下位層の値を使用)"
     ]
 
 

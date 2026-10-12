@@ -33,7 +33,10 @@ def test_semantic_detects_sensitive(monkeypatch):
     monkeypatch.setattr(llm_judge.subprocess, "run", fake_run)
     result = exfil_guard.semantic_check(LONG_PAYLOAD, CFG)
     assert result == {"sensitive": True, "reason": "未公開の業績情報"}
-    assert captured["cmd"] == ["claude", "-p", "--model", "haiku", "--tools="]
+    assert captured["cmd"] == [
+        "claude", "-p", "--model", "haiku", "--tools=",
+        "--setting-sources=", "--strict-mcp-config", "--no-session-persistence",
+    ]
     assert LONG_PAYLOAD[:100] in captured["kwargs"]["input"]
     assert captured["kwargs"]["timeout"] == 30
     assert captured["kwargs"]["env"].get("SAFE_DEV_HOOKS_SEMANTIC") == "1"
