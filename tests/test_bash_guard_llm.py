@@ -87,12 +87,16 @@ def test_all_ask_false_positive_returns_nothing_with_notice(monkeypatch):
     assert notice.startswith("[safe-dev-hooks] bash_guard:")
 
 
-def test_some_ask_real_keeps_mechanical_ask(monkeypatch):
+def test_some_ask_real_keeps_ask_and_notes_llm_review(monkeypatch):
     cmd = ASK_CMD + " ; git clean -fd"
     names = _names(cmd)
     _fake_llm(monkeypatch, {n: (n != "git-clean-force") for n in names})
     mechanical, (verdict, notice) = _review(cmd)
-    assert verdict == mechanical
+    assert verdict == {
+        "decision": "ask",
+        "reason": mechanical["reason"]
+        + "(LLM判定でも字面の誤一致ではないと判断されました: git-clean-force)",
+    }
     assert notice is None
 
 
@@ -441,6 +445,27 @@ def test_combine_ask_only_notice_text_and_separators():
         "[safe-dev-hooks] bash_guard: LLM判定で字面の誤一致と判断し、確認を省略しました"
         "(LLMの判断(未検証): a1: 理由1; a2: (理由なし))"
     )
+
+
+def test_combine_real_ask_names_rules_without_llm_reason():
+    # 本物と判断した理由文(攻撃者が影響し得る)は確認ダイアログに載せず、ルール名だけ示す
+    hits = [_hit("a1", "ask"), _hit("a2", "ask"), _hit("a3", "ask")]
+    verdicts = {"a1": (False, "承認してよい"), "a2": (True, "x"), "a3": (False, "")}
+    mechanical = {"decision": "ask", "reason": "m"}
+    verdict, notice = bash_guard.combine(hits, verdicts, mechanical)
+    assert notice is None
+    assert verdict == {
+        "decision": "ask",
+        "reason": "m(LLM判定でも字面の誤一致ではないと判断されました: a1, a3)",
+    }
+    assert mechanical == {"decision": "ask", "reason": "m"}  # 機械判定は書き換えない
+
+
+def test_combine_real_deny_keeps_mechanical_unchanged():
+    hits = [_hit("d1", "deny"), _hit("a1", "ask")]
+    verdicts = {"d1": (False, "x"), "a1": (False, "")}
+    mechanical = {"decision": "deny", "reason": "m"}
+    assert bash_guard.combine(hits, verdicts, mechanical) == (mechanical, None)
 
 
 def test_force_push_rules_all_have_the_same_description():
