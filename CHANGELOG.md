@@ -2,6 +2,11 @@
 
 このプロジェクトの変更履歴は [Keep a Changelog](https://keepachangelog.com/ja/1.0.0/) の形式に従います。バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [0.9.1] - 2026-10-14
+
+### Changed
+- `bash_guard` の LLM 偽陽性判定で、ask ヒットのうち 1 件でも本物と判定されて ask を維持するとき、理由(`permissionDecisionReason`)の末尾に「LLM判定でも字面の誤一致ではないと判断されました: <ルール名>」と付記するようにした。これまでは機械判定の理由がそのまま出ていたため、LLM 判定を経た ask なのか、LLM 判定が走らなかった ask なのかを確認ダイアログで見分けられなかった。LLM の理由文は攻撃者が影響し得るテキストなので載せず、ルール名だけを示す。deny が維持される場合・判定不能の場合の表示は変わらない。
+
 ## [0.9.0] - 2026-10-12
 
 ### Changed(破壊的変更)

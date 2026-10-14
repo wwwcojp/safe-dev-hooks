@@ -273,8 +273,12 @@ def combine(
             names = ", ".join(h["name"] for h in real_asks)
             reason += f"あわせて注意が必要なコマンドを検出: {names}。"
         return {"decision": "ask", "reason": reason + "実行してよいか確認してください"}, None
-    if not all(verdicts[h["name"]][0] for h in ask_hits):
-        return mechanical, None
+    real_asks = [h for h in ask_hits if not verdicts[h["name"]][0]]
+    if real_asks:
+        # LLM の理由文は承認を促す文言を差し込まれ得るので載せず、ルール名だけ示す
+        names = ", ".join(h["name"] for h in real_asks)
+        reason = f"{mechanical['reason']}(LLM判定でも字面の誤一致ではないと判断されました: {names})"
+        return {"decision": "ask", "reason": reason}, None
     return None, (
         "[safe-dev-hooks] bash_guard: LLM判定で字面の誤一致と判断し、確認を省略しました"
         f"({_describe(ask_hits, verdicts)})"
